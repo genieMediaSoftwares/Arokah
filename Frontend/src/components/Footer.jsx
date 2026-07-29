@@ -2,9 +2,9 @@ import React from "react";
 import { FaWhatsapp, FaLinkedin, FaInstagram } from "react-icons/fa";
 
 const Footer = () => {
-  const phoneNumber = "919966888428";
+  const phoneNumber = "918978465963";
   const message = encodeURIComponent(
-    "Hello Event Manager! 👋\n\nThese events are available?\nWhich event do you want?\nPlease contact us."
+    "Hello Arokah! 👋\n\nThese events are available?\nWhich event do you want?\nPlease contact us."
   );
   const whatsappLink = `https://wa.me/${phoneNumber}?text=${message}`;
 
@@ -17,9 +17,16 @@ const Footer = () => {
 
           {/* Brand — spans full width on mobile */}
           <div className="col-span-2 lg:col-span-1 flex flex-col gap-2">
-            <h3 className="text-base sm:text-xl font-semibold text-[#330962]">
-              Event Manager
-            </h3>
+            <div className="flex items-center gap-2.5">
+              <img
+                src="/arokah-logo.png"
+                alt="Arokah Logo"
+                className="w-10 h-10 rounded-full object-cover border border-purple-100 shadow-sm"
+              />
+              <h3 className="text-base sm:text-xl font-bold text-[#330962]">
+                Arokah
+              </h3>
+            </div>
             <p className="text-gray-500 text-xs sm:text-sm leading-relaxed">
               Concerts, bhajans, weddings, corporate events & more.
             </p>
@@ -32,7 +39,7 @@ const Footer = () => {
                 className="text-blue-700 text-lg hover:scale-110 transition">
                 <FaLinkedin />
               </a>
-              <a href="https://www.instagram.com/itsgeniemedia_official/" target="_blank" rel="noopener noreferrer"
+              <a href="https://www.instagram.com/arokah.club/" target="_blank" rel="noopener noreferrer"
                 className="text-pink-600 text-lg hover:scale-110 transition">
                 <FaInstagram />
               </a>
@@ -44,9 +51,9 @@ const Footer = () => {
             <h4 className="font-semibold text-gray-800 text-xs sm:text-sm uppercase tracking-wide">
               Contact
             </h4>
-            <a href="tel:+919966888428"
+            <a href="tel:+918978465963"
               className="text-gray-500 text-xs sm:text-sm hover:text-[#9333EA]">
-              📞 9966888428
+              📞 8978465963
             </a>
             <a href={whatsappLink} target="_blank" rel="noopener noreferrer"
               className="text-gray-500 text-xs sm:text-sm hover:text-[#9333EA]">
@@ -59,10 +66,10 @@ const Footer = () => {
             <h4 className="font-semibold text-gray-800 text-xs sm:text-sm uppercase tracking-wide">
               Quick Links
             </h4>
-            {["Home", "About", "Services", "Contact"].map((link) => (
+            {["Home", "About", "Events", "Contact"].map((link) => (
               <a
                 key={link}
-                href={`/${link.toLowerCase() === "home" ? "" : link.toLowerCase()}`}
+                href={link === "Home" ? "/" : `/${link.toLowerCase()}`}
                 className="text-gray-500 text-xs sm:text-sm hover:text-[#9333EA]"
               >
                 {link}
@@ -93,7 +100,7 @@ const Footer = () => {
         {/* Bottom Copyright */}
         <div className="border-t mt-5 sm:mt-8 pt-3 sm:pt-4 text-center">
           <p className="text-gray-400 text-xs sm:text-sm">
-            © 2026 Event Manager. All rights reserved.
+            © 2026 Arokah. All rights reserved.
           </p>
         </div>
 

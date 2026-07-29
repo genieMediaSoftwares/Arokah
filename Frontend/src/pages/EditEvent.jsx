@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { db } from "../firebase/firebaseConfig";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { ref, get, update } from "firebase/database";
 import { toast } from "react-toastify";
 import { useNavigate, useParams } from "react-router-dom";
 
@@ -121,14 +121,15 @@ function EditEvent() {
 
   // Extras (Games, Food, Music, Other)
   const [extras, setExtras] = useState([]);
+  const [submitting, setSubmitting] = useState(false);
 
   /* ── Fetch existing event data ── */
   useEffect(() => {
     const fetchEvent = async () => {
       try {
-        const snap = await getDoc(doc(db, "events", id));
+        const snap = await get(ref(db, `events/${id}`));
         if (snap.exists()) {
-          const d = snap.data();
+          const d = snap.val();
           setTitle(d.title || "");
           setType(d.type || "");
           setPrice(d.price || "");
@@ -139,7 +140,6 @@ function EditEvent() {
           setImageURL(d.mainImage || "");
           setStatus(d.status || "upcoming");
 
-          // Restore time — prefer 24h stored string, fall back to 12h string
           if (d.startTime) {
             setStartTime(from24h(d.startTime));
           } else if (d.startTime12h) {
@@ -151,15 +151,14 @@ function EditEvent() {
             setEndTime(from12hStr(d.endTime12h));
           }
 
-          // Support both new "extras" and legacy "extraFields"
           const savedExtras = d.extras || d.extraFields || [];
-          // Ensure every extra has a stable id
           setExtras(savedExtras.map((ex) => ({ ...ex, id: ex.id || Date.now() + Math.random() })));
         } else {
           toast.error("Event not found");
           navigate("/admin/dashboard");
         }
-      } catch {
+      } catch (err) {
+        console.error(err);
         toast.error("Failed to load event");
       } finally {
         setLoading(false);
@@ -182,6 +181,7 @@ function EditEvent() {
   /* ── UPDATE ── */
   const handleUpdate = async (e) => {
     e.preventDefault();
+    if (submitting) return;
     if (!title || !imageURL) {
       toast.error("Event title & image URL are required");
       return;
@@ -192,8 +192,9 @@ function EditEvent() {
     const startTime24h = to24h(startTime);
     const endTime24h   = to24h(endTime);
 
+    setSubmitting(true);
     try {
-      await updateDoc(doc(db, "events", id), {
+      await update(ref(db, `events/${id}`), {
         title, type, price, phone, location,
         eventDate,
         startTime: startTime24h,
@@ -204,12 +205,15 @@ function EditEvent() {
         mainImage: imageURL,
         extras,
         status,
-        updatedAt: new Date(),
+        updatedAt: new Date().toISOString(),
       });
       toast.success("Event updated successfully!");
       navigate("/admin/dashboard");
-    } catch {
-      toast.error("Error updating event. Please try again.");
+    } catch (err) {
+      console.error("Error updating event:", err);
+      toast.error(err?.message || "Error updating event. Please try again.");
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -251,9 +255,13 @@ function EditEvent() {
                 className="border border-slate-200 bg-white hover:bg-slate-100 text-slate-600 text-sm font-semibold px-5 py-2.5 rounded-xl transition-all active:scale-95 whitespace-nowrap">
                 ← Cancel
               </button>
-              <button type="submit"
-                className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-bold px-6 py-2.5 rounded-xl shadow-md shadow-purple-200 transition-all active:scale-95 whitespace-nowrap">
-                💾 Save Changes
+              <button type="submit" disabled={submitting}
+                className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-60 text-white text-sm font-bold px-6 py-2.5 rounded-xl shadow-md shadow-purple-200 transition-all active:scale-95 whitespace-nowrap">
+                {submitting ? (
+                  <><span className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" /> Saving…</>
+                ) : (
+                  "💾 Save Changes"
+                )}
               </button>
             </div>
           </div>
@@ -547,9 +555,13 @@ function EditEvent() {
                 className="border border-slate-200 bg-white hover:bg-slate-100 text-slate-600 text-sm font-semibold px-5 py-2.5 rounded-xl transition-all active:scale-95 whitespace-nowrap">
                 ← Cancel
               </button>
-              <button type="submit"
-                className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-bold px-7 py-2.5 rounded-xl shadow-md shadow-purple-200 transition-all active:scale-95 whitespace-nowrap">
-                💾 Save Changes
+              <button type="submit" disabled={submitting}
+                className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-60 text-white text-sm font-bold px-7 py-2.5 rounded-xl shadow-md shadow-purple-200 transition-all active:scale-95 whitespace-nowrap">
+                {submitting ? (
+                  <><span className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" /> Saving…</>
+                ) : (
+                  "💾 Save Changes"
+                )}
               </button>
             </div>
           </div>

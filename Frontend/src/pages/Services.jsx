@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { db } from "../firebase/firebaseConfig";
-import { collection, onSnapshot } from "firebase/firestore";
+import { ref, onValue } from "firebase/database";
 import { useNavigate } from "react-router-dom";
 
 /* ── Helpers ── */
@@ -42,16 +42,24 @@ function Services() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, "events"), (snap) => {
-      const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      data.sort((a, b) => {
-        const order = { live: 0, upcoming: 1 };
-        const diff  = (order[a.status] ?? 2) - (order[b.status] ?? 2);
-        return diff !== 0 ? diff : (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0);
-      });
-      setEvents(data);
-      setLoading(false);
-    });
+    const unsub = onValue(
+      ref(db, "events"),
+      (snap) => {
+        const val = snap.val() || {};
+        const data = Object.keys(val).map((k) => ({ id: k, ...val[k] }));
+        data.sort((a, b) => {
+          const order = { live: 0, upcoming: 1 };
+          const diff  = (order[a.status] ?? 2) - (order[b.status] ?? 2);
+          return diff !== 0 ? diff : String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
+        });
+        setEvents(data);
+        setLoading(false);
+      },
+      (err) => {
+        console.error("Services onValue error:", err);
+        setLoading(false);
+      }
+    );
     return () => unsub();
   }, []);
 
@@ -438,205 +446,145 @@ function Services() {
         .s-empty-btn:hover{ border-color:var(--purple); color:var(--purple); }
 
         /* ── GRID ── */
-        /* Desktop: 3 cols | Tablet: 2 cols | Mobile: 1 col compact */
         .s-grid{
           display:grid;
           grid-template-columns:repeat(3,1fr);
-          gap:18px;
+          gap:22px;
         }
-        @media(max-width:1024px){ .s-grid{ grid-template-columns:repeat(2,1fr); } }
-        @media(max-width:600px){
-          /* Mobile: single column, horizontal card layout */
-          .s-grid{ grid-template-columns:1fr; gap:12px; }
-        }
+        @media(max-width:1024px){ .s-grid{ grid-template-columns:repeat(2,1fr); gap:18px; } }
+        @media(max-width:640px){ .s-grid{ grid-template-columns:1fr; gap:16px; } }
 
         /* ── CARD ── */
         .s-card{
           background:var(--white); border:1.5px solid var(--border);
-          border-radius:18px; overflow:hidden;
+          border-radius:20px; overflow:hidden;
           cursor:pointer; display:flex; flex-direction:column;
-          transition:all .28s cubic-bezier(.22,1,.36,1);
+          transition:all .3s cubic-bezier(.22,1,.36,1);
           animation:fadeUp .4s ease both;
-          box-shadow:0 2px 12px rgba(112,43,221,.08);
+          box-shadow:0 4px 18px rgba(51,9,98,.06);
         }
         .s-card:hover{
-          transform:translateY(-4px); border-color:var(--purple);
-          box-shadow:0 14px 40px rgba(112,43,221,.16);
+          transform:translateY(-6px); border-color:#9333ea;
+          box-shadow:0 20px 45px rgba(51,9,98,.16);
         }
         .s-card:active{ transform:scale(.98); }
         @keyframes fadeUp{ from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)} }
 
-        /* ── MOBILE: horizontal card layout ── */
-        @media(max-width:600px){
-          .s-card{ flex-direction:row; border-radius:16px; min-height:0; }
-          .s-cimg-wrap{ width:120px; flex-shrink:0; }
-          .s-cimg{ width:120px; height:100% !important; min-height:130px; object-fit:cover; }
-          .s-cimg-placeholder{ width:120px; height:100% !important; min-height:130px; font-size:36px; }
-          .s-cimg-grad{ background:linear-gradient(to right,rgba(0,0,0,.45) 0%,transparent 100%); }
-          .s-tag-live, .s-tag-up{ top:8px; left:8px; font-size:9px; padding:3px 8px; }
-          .s-tag-type{ display:none; }
-          .s-cprice{ bottom:8px; right:auto; left:8px; font-size:11px; padding:3px 8px; border-radius:6px; }
-          .s-cbody{ padding:12px 12px 12px; flex:1; min-width:0; justify-content:space-between; }
-          .s-ctitle{ font-size:15px !important; -webkit-line-clamp:2 !important; margin-bottom:4px; }
-          .s-cdesc{ font-size:11px !important; -webkit-line-clamp:2; margin-bottom:8px; }
-          .s-cinfo{ gap:4px; margin-bottom:10px; }
-          .s-cinfo-row{ font-size:11px !important; }
-          /* hide extras section on mobile for compactness */
-          .s-extras-section{ display:none; }
-          .s-exnote{ display:none; }
-          .s-camount{ font-size:16px !important; }
-          .s-btn-live, .s-btn-up{ padding:10px !important; font-size:13px !important; border-radius:10px !important; }
-          .s-ctrust{ display:none; }
-          /* show mini extras indicator instead */
-          .s-mob-extras{ display:flex !important; }
+        /* Image Wrap */
+        .s-cimg-wrap{
+          position:relative; overflow:hidden; width:100%;
+          aspect-ratio:16/9; min-height:200px; background:#110729;
         }
+        @media(max-width:640px){ .s-cimg-wrap{ aspect-ratio:16/9; min-height:180px; } }
 
-        /* Image */
-        .s-cimg-wrap{ position:relative; overflow:hidden; flex-shrink:0; }
-        .s-cimg{ width:100%; height:190px; object-fit:cover; display:block; transition:transform .5s ease; }
-        .s-card:hover .s-cimg{ transform:scale(1.05); }
+        .s-cimg{
+          width:100%; height:100%; object-fit:cover; object-position:center;
+          display:block; transition:transform .5s ease;
+        }
+        .s-card:hover .s-cimg{ transform:scale(1.06); }
+
         .s-cimg-placeholder{
-          height:190px; display:flex; align-items:center; justify-content:center;
-          font-size:50px; background:linear-gradient(135deg,var(--purple-light),#F0FFF4);
+          width:100%; height:100%; display:flex; align-items:center; justify-content:center;
+          font-size:52px; background:linear-gradient(135deg,var(--purple-light),#F0FFF4);
         }
         .s-cimg-grad{
           position:absolute; inset:0;
-          background:linear-gradient(to top,rgba(0,0,0,.52) 0%,rgba(0,0,0,.04) 50%,transparent 100%);
+          background:linear-gradient(to top, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.15) 55%, rgba(0,0,0,0.4) 100%);
         }
 
         .s-tag-live{
-          position:absolute; top:10px; left:10px;
-          display:inline-flex; align-items:center; gap:5px;
+          position:absolute; top:12px; left:12px;
+          display:inline-flex; align-items:center; gap:6px;
           background:var(--green); color:#fff;
-          font-size:9px; font-weight:800; letter-spacing:.1em;
-          padding:4px 10px; border-radius:100px;
-          box-shadow:0 0 12px rgba(5,150,105,.45);
+          font-size:10px; font-weight:800; letter-spacing:.08em;
+          padding:5px 12px; border-radius:100px;
+          box-shadow:0 2px 10px rgba(5,150,105,.45);
         }
         .s-tag-up{
-          position:absolute; top:10px; left:10px;
-          display:inline-flex; align-items:center; gap:4px;
-          background:rgba(20,10,50,.55); color:#fff;
-          border:1px solid rgba(112,43,221,.5);
-          font-size:9px; font-weight:800; letter-spacing:.08em;
-          padding:4px 10px; border-radius:100px; backdrop-filter:blur(6px);
+          position:absolute; top:12px; left:12px;
+          display:inline-flex; align-items:center; gap:5px;
+          background:rgba(20,10,50,.65); color:#fff;
+          border:1px solid rgba(255,255,255,.25);
+          font-size:10px; font-weight:800; letter-spacing:.06em;
+          padding:5px 12px; border-radius:100px; backdrop-filter:blur(8px);
         }
         .s-tag-type{
-          position:absolute; top:10px; right:10px;
-          background:rgba(0,0,0,.5); color:#fff;
-          font-size:9px; font-weight:700;
-          padding:3px 9px; border-radius:100px;
+          position:absolute; top:12px; right:12px;
+          background:rgba(0,0,0,.6); color:#fff;
+          border:1px solid rgba(255,255,255,.25);
+          font-size:10px; font-weight:700;
+          padding:4px 11px; border-radius:100px; backdrop-filter:blur(8px);
         }
         .s-cprice{
-          position:absolute; bottom:10px; right:10px;
-          background:rgba(255,255,255,.97); color:var(--text);
-          border:1px solid rgba(0,0,0,.06);
-          font-size:12px; font-weight:900;
-          padding:4px 10px; border-radius:7px;
-          box-shadow:0 2px 8px rgba(0,0,0,.12);
+          position:absolute; bottom:12px; right:12px;
+          background:rgba(255,255,255,.96); color:var(--text);
+          border:1px solid rgba(0,0,0,.08);
+          font-size:13px; font-weight:900;
+          padding:5px 12px; border-radius:100px;
+          box-shadow:0 4px 14px rgba(0,0,0,.18);
         }
         .s-cprice-free{ color:var(--green); font-weight:800; }
 
-        /* Card body */
-        .s-cbody{ padding:14px 14px 16px; display:flex; flex-direction:column; flex-grow:1; }
+        /* Body */
+        .s-cbody{ padding:18px; display:flex; flex-direction:column; flex-grow:1; gap:12px; }
 
         .s-ctitle{
-          font-family:'Playfair Display',serif;
-          font-size:17px; font-weight:700; color:var(--text);
-          margin-bottom:5px; line-height:1.25;
-          display:-webkit-box; -webkit-line-clamp:1; -webkit-box-orient:vertical; overflow:hidden;
+          font-family:'Outfit',sans-serif;
+          font-size:18px; font-weight:800; color:var(--text);
+          line-height:1.3;
+          display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
           transition:color .2s;
         }
         .s-card:hover .s-ctitle{ color:var(--purple); }
 
         .s-cdesc{
-          font-size:12px; color:var(--text-mid); line-height:1.55;
-          margin-bottom:10px;
+          font-size:13px; color:#52525b; line-height:1.5;
           display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
         }
 
-        .s-cinfo{ display:flex; flex-direction:column; gap:5px; margin-bottom:12px; }
-        .s-cinfo-row{
-          display:flex; align-items:center; gap:5px;
-          font-size:12px; color:var(--text-mid); font-weight:600;
-        }
-        .s-ci-sep{ color:var(--border); }
-        .s-cinfo-text{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-
-        /* Mobile-only extras pill (shown instead of full extras on mobile) */
-        .s-mob-extras{
-          display:none;
-          align-items:center; gap:5px; flex-wrap:wrap;
-          margin-bottom:10px;
-        }
-        .s-mob-ex-pill{
-          font-size:10px; font-weight:700;
-          background:var(--purple-light); color:var(--purple);
-          border:1px solid var(--border); padding:2px 8px; border-radius:100px;
+        .s-cinfo-grid{ display:flex; flex-wrap:wrap; gap:8px; }
+        .s-info-chip{
+          display:inline-flex; align-items:center; gap:6px;
+          background:#f8f5ff; border:1px solid #e9d5ff; color:#3b0764;
+          font-size:12px; font-weight:600; padding:5px 10px; border-radius:8px;
         }
 
-        .s-divider{ height:1px; background:var(--border); margin:0 0 12px; }
-
-        /* Extras (desktop only — hidden on mobile via .s-extras-section) */
-        .s-extras-section{}
-        .s-exhead{ display:flex; align-items:center; justify-content:space-between; margin-bottom:9px; }
-        .s-exlabel{ font-size:9px; font-weight:800; letter-spacing:.1em; text-transform:uppercase; color:var(--text-mid); }
-        .s-exbadge{
-          font-size:9px; font-weight:800;
-          background:var(--green-light); color:var(--green-dark);
-          border:1px solid var(--green-mid); padding:2px 8px; border-radius:100px;
+        /* Compact Add-on summary */
+        .s-card-addons-compact{
+          background:#faf5ff; border:1px solid #f3e8ff; border-radius:12px;
+          padding:10px 12px; display:flex; flex-direction:column; gap:6px;
         }
-        .s-excats{ display:flex; flex-wrap:wrap; gap:5px; margin-bottom:8px; }
-        .s-excat{
-          display:flex; align-items:center; gap:3px;
-          font-size:10px; font-weight:700;
-          padding:3px 9px; border-radius:100px; border:1px solid;
-        }
-        .s-exitems{ display:flex; flex-direction:column; gap:5px; margin-bottom:8px; }
-        .s-exrow{
-          display:flex; align-items:center; gap:8px;
-          background:var(--purple-light); border:1px solid var(--border);
-          border-radius:9px; padding:7px 10px;
-        }
-        .s-exthumb{ width:30px; height:30px; border-radius:6px; object-fit:cover; flex-shrink:0; }
-        .s-exinfo{ flex:1; min-width:0; }
-        .s-exname{ font-size:11px; font-weight:700; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .s-exsub{ font-size:10px; color:var(--text-mid); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .s-exprice{ font-size:12px; font-weight:900; color:var(--purple); }
-        .s-exper{ font-size:9px; color:var(--text-soft); }
-        .s-exfree{ font-size:10px; font-weight:800; color:var(--green-dark); background:var(--green-light); border:1px solid var(--green-mid); padding:2px 7px; border-radius:100px; }
-        .s-exmore{ text-align:center; font-size:11px; font-weight:700; color:var(--purple); background:var(--purple-light); border:1px solid var(--border); padding:7px; border-radius:7px; }
-        .s-exnote{ font-size:11px; color:var(--text-mid); font-style:italic; margin-bottom:12px; display:flex; align-items:center; gap:4px; line-height:1.5; }
+        .s-addon-head{ display:flex; align-items:center; justify-content:space-between; }
+        .s-addon-title{ font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; color:#6b21a8; }
+        .s-addon-badge{ font-size:10px; font-weight:700; background:#dcfce7; color:#166534; padding:2px 7px; border-radius:100px; }
+        .s-addon-list{ display:flex; flex-wrap:wrap; gap:5px; }
+        .s-addon-pill{ font-size:11px; font-weight:600; background:#fff; border:1px solid #e9d5ff; color:#4c1d95; padding:3px 8px; border-radius:6px; }
+        .s-addon-pill-more{ font-size:11px; font-weight:700; color:#7e22ce; padding:3px 4px; }
 
-        /* CTA */
-        .s-ccta{ margin-top:auto; }
-        .s-cpricerow{ display:flex; align-items:center; justify-content:space-between; margin-bottom:9px; }
-        .s-cfrom{ font-size:11px; color:var(--text-mid); font-weight:600; }
-        .s-camount{ font-size:18px; font-weight:900; color:var(--text); }
-        .s-camount span{ font-size:11px; font-weight:500; color:var(--text-soft); margin-left:2px; }
+        /* Footer CTA */
+        .s-cfooter{
+          margin-top:auto; pt:12px; border-t:1px solid var(--border);
+          display:flex; align-items:center; justify-content:space-between; gap:10px;
+        }
+        .s-cprice-from{ display:flex; flex-direction:column; }
+        .s-cfrom-label{ font-size:10px; color:#71717a; font-weight:600; text-transform:uppercase; }
+        .s-camount-bold{ font-size:19px; font-weight:900; color:#330962; line-height:1.1; }
+        .s-camount-sub{ font-size:10px; font-weight:600; color:#a1a1aa; }
 
-        .s-btn-live{
-          width:100%; padding:13px;
-          background:linear-gradient(135deg,var(--green),var(--green-dark));
+        .s-card-btn{
+          background:linear-gradient(135deg,#330962,#581c87);
           color:#fff; border:none; cursor:pointer;
-          font-family:'Outfit',sans-serif; font-size:14px; font-weight:800;
-          border-radius:11px; box-shadow:0 4px 16px rgba(5,150,105,.28); transition:all .2s;
+          font-weight:700; font-size:13px;
+          padding:10px 18px; border-radius:12px;
+          box-shadow:0 4px 14px rgba(51,9,98,.25); transition:all .2s;
+          white-space:nowrap;
         }
-        .s-btn-live:hover{ box-shadow:0 8px 24px rgba(5,150,105,.42); transform:translateY(-1px); }
-        .s-btn-live:active{ transform:scale(.98); }
-
-        .s-btn-up{
-          width:100%; padding:13px;
-          background:linear-gradient(135deg,var(--purple),var(--purple-dark));
-          color:#fff; border:none; cursor:pointer;
-          font-family:'Outfit',sans-serif; font-size:14px; font-weight:800;
-          border-radius:11px; box-shadow:0 4px 16px rgba(112,43,221,.28); transition:all .2s;
+        .s-card-btn:hover{ transform:translateY(-1px); box-shadow:0 6px 20px rgba(51,9,98,.35); background:linear-gradient(135deg,#4c1d95,#6b21a8); }
+        .s-card-btn-live{
+          background:linear-gradient(135deg,#059669,#047857);
+          box-shadow:0 4px 14px rgba(5,150,105,.3);
         }
-        .s-btn-up:hover{ box-shadow:0 8px 24px rgba(112,43,221,.42); transform:translateY(-1px); }
-        .s-btn-up:active{ transform:scale(.98); }
-
-        .s-ctrust{ display:flex; align-items:center; justify-content:center; gap:8px; margin-top:9px; flex-wrap:wrap; }
-        .s-ctrust span{ font-size:10px; color:var(--text-soft); font-weight:600; display:flex; align-items:center; gap:2px; }
-        .s-tdot{ width:2px; height:2px; border-radius:50%; background:var(--border); }
+        .s-card-btn-live:hover{ background:linear-gradient(135deg,#10b981,#059669); }
       `}</style>
     </div>
   );
@@ -655,18 +603,8 @@ function EventCard({ event, idx, onClick }) {
   const hasExtras = extras.length > 0;
   const basePrice = extractPrice(event.price);
 
-  const catCounts = Object.keys(CATEGORY_CONFIG).reduce((acc, k) => {
-    acc[k] = extras.filter((e) => e.category === k).length;
-    return acc;
-  }, {});
-
-  // Mobile extras pills — compact summary
-  const extraCats = Object.entries(CATEGORY_CONFIG)
-    .filter(([k]) => catCounts[k] > 0)
-    .slice(0, 3);
-
   return (
-    <div className="s-card" style={{ animationDelay: `${idx * 50}ms` }} onClick={onClick}>
+    <div className="s-card" style={{ animationDelay: `${idx * 40}ms` }} onClick={onClick}>
 
       {/* Image */}
       <div className="s-cimg-wrap">
@@ -676,14 +614,14 @@ function EventCard({ event, idx, onClick }) {
         <div className="s-cimg-grad" />
 
         {isLive
-          ? <div className="s-tag-live"><span className="s-pdot" style={{width:5,height:5}} />LIVE</div>
-          : <div className="s-tag-up">📅 Soon</div>}
+          ? <div className="s-tag-live"><span className="s-pdot" style={{width:6,height:6}} />LIVE</div>
+          : <div className="s-tag-up">📅 UPCOMING</div>}
 
         {event.type && <div className="s-tag-type">{event.type}</div>}
 
         <div className="s-cprice">
           {basePrice > 0
-            ? <>₹{basePrice.toLocaleString()}<span style={{fontSize:9,fontWeight:500,color:"#7A6A9E",marginLeft:1}}>/p</span></>
+            ? <>₹{basePrice.toLocaleString()}<span style={{fontSize:10,fontWeight:600,color:"#71717a",marginLeft:1}}>/p</span></>
             : <span className="s-cprice-free">Free</span>}
         </div>
       </div>
@@ -693,113 +631,50 @@ function EventCard({ event, idx, onClick }) {
         <h3 className="s-ctitle">{event.title}</h3>
         {event.description && <p className="s-cdesc">{event.description}</p>}
 
-        {/* Info rows */}
-      <div className="s-cinfo">
-  {(dateStr || timeStr) && (
-    <div className="s-cinfo-block">
-      {dateStr && (
-        <div className="s-info-item">
-          <span className="s-info-icon">📅</span>
-          <span className="s-info-text">{dateStr}</span>
-        </div>
-      )}
-      {timeStr && (
-        <div className="s-info-item">
-          <span className="s-info-icon">⏰</span>
-          <span className="s-info-text">{timeStr}</span>
-        </div>
-      )}
-    </div>
-  )}
-
-  {event.location && (
-    <div className="s-info-item s-info-location">
-      <span className="s-info-icon">📍</span>
-      <span className="s-info-text">{event.location}</span>
-    </div>
-  )}
-</div>
-
-        {/* Mobile-only: compact extras pills */}
-        {hasExtras && extraCats.length > 0 && (
-          <div className="s-mob-extras">
-            {extraCats.map(([k, { icon, label }]) => (
-              <span key={k} className="s-mob-ex-pill">{icon} {label}</span>
-            ))}
-            {extras.length > 3 && (
-              <span className="s-mob-ex-pill">+{extras.length - 3} more</span>
-            )}
+        {/* Info Chips */}
+        {(dateStr || timeStr || event.location) && (
+          <div className="s-cinfo-grid">
+            {dateStr && <span className="s-info-chip">📅 {dateStr}</span>}
+            {timeStr && <span className="s-info-chip">⏰ {timeStr}</span>}
+            {event.location && <span className="s-info-chip">📍 {event.location}</span>}
           </div>
         )}
 
-        {/* Desktop: full extras section */}
+        {/* Compact Add-ons */}
         {hasExtras && (
-          <div className="s-extras-section">
-            <div className="s-divider" />
-            <div className="s-exhead">
-              <span className="s-exlabel">🎪 Optional Add-ons</span>
-              <span className="s-exbadge">✅ Your choice</span>
+          <div className="s-card-addons-compact">
+            <div className="s-addon-head">
+              <span className="s-addon-title">🎪 Optional Add-ons</span>
+              <span className="s-addon-badge">Your Choice</span>
             </div>
-            <div className="s-excats">
-              {Object.entries(CATEGORY_CONFIG).map(([key, { icon, label, color }]) => {
-                const count = catCounts[key];
-                if (!count) return null;
-                return (
-                  <span key={key} className="s-excat"
-                    style={{ color, borderColor: color + "40", background: color + "14" }}>
-                    {icon} {label} <span style={{opacity:.5}}>×{count}</span>
-                  </span>
-                );
-              })}
-            </div>
-            <div className="s-exitems">
-              {extras.slice(0, 2).map((extra, i) => {
-                const price = extractPrice(extra.price);
-                return (
-                  <div key={extra.id || i} className="s-exrow">
-                    {extra.imageURL && (
-                      <img src={extra.imageURL} alt={extra.name} className="s-exthumb"
-                        onError={(e) => { e.target.style.display = "none"; }} />
-                    )}
-                    <div className="s-exinfo">
-                      <p className="s-exname">{extra.name}</p>
-                      {extra.description && <p className="s-exsub">{extra.description}</p>}
-                    </div>
-                    <div style={{textAlign:"right",flexShrink:0}}>
-                      {price > 0
-                        ? <><div className="s-exprice">+₹{price.toLocaleString()}</div><div className="s-exper">/ticket</div></>
-                        : <span className="s-exfree">Free</span>}
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="s-addon-list">
+              {extras.slice(0, 2).map((extra, i) => (
+                <span key={i} className="s-addon-pill">
+                  {extra.name} {extractPrice(extra.price) > 0 ? `(+₹${extractPrice(extra.price)})` : "(Free)"}
+                </span>
+              ))}
               {extras.length > 2 && (
-                <div className="s-exmore">+{extras.length - 2} more add-on{extras.length - 2 > 1 ? "s" : ""} inside →</div>
+                <span className="s-addon-pill-more">+{extras.length - 2} more</span>
               )}
             </div>
-            <p className="s-exnote"><span>💡</span>Entry alone is enough — add-ons are 100% optional</p>
           </div>
         )}
 
-        {/* CTA */}
-        <div className="s-ccta">
-          {basePrice > 0 && (
-            <div className="s-cpricerow">
-              <span className="s-cfrom">Starts from</span>
-              <span className="s-camount">₹{basePrice.toLocaleString()}<span>/person</span></span>
-            </div>
-          )}
-          <button className={isLive ? "s-btn-live" : "s-btn-up"} onClick={onClick}>
-            {isLive ? "🎟️ Book Now — Live!" : "View Details & Book →"}
-          </button>
-          <div className="s-ctrust">
-            <span>🔒 Secure</span>
-            <div className="s-tdot" />
-            <span>✅ Instant Confirm</span>
-            <div className="s-tdot" />
-            <span>💳 No Hidden Fees</span>
+        {/* Footer */}
+        <div className="s-cfooter">
+          <div className="s-cprice-from">
+            <span className="s-cfrom-label">Starts from</span>
+            <span className="s-camount-bold">
+              {basePrice > 0 ? `₹${basePrice.toLocaleString()}` : "Free"}
+              {basePrice > 0 && <span className="s-camount-sub">/p</span>}
+            </span>
           </div>
+
+          <button className={`s-card-btn ${isLive ? "s-card-btn-live" : ""}`} onClick={onClick}>
+            {isLive ? "🎟️ Book Now" : "View Details →"}
+          </button>
         </div>
+
       </div>
     </div>
   );

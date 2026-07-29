@@ -56,7 +56,7 @@ function About() {
      <section className="bg-gray-50 py-14">
   <div className="max-w-6xl mx-auto px-4">
     <div className="text-center mb-10">
-      <span className="inline-block text-xs font-semibold tracking-widest uppercase text-white bg-[#330962] border border-purple-200 px-4 py-1.5 rounded-full mb-3">Our Services</span>
+      <span className="inline-block text-xs font-semibold tracking-widest uppercase text-white bg-[#330962] border border-purple-200 px-4 py-1.5 rounded-full mb-3">Our Events</span>
       <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900">What We <span className="text-transparent bg-clip-text bg-[#330962] to-fuchsia-500">Do</span></h2>
       <div className="mt-3 mx-auto w-12 h-1 rounded-full bg-[#330962]" />
     </div>

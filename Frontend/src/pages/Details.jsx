@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { db } from "../firebase/firebaseConfig";
-import { doc, getDoc } from "firebase/firestore";
+import { ref, get } from "firebase/database";
 import { toast } from "react-toastify";
 // ─── Booking Flow Modal ───────────────────────────────────────────────────────
 function BookingModal({ event, normalizedExtras, groupedExtras, basePrice, onClose, onConfirm }) {
@@ -323,9 +323,12 @@ function Details() {
 
   useEffect(() => {
     const fetchEvent = async () => {
-      const docRef = doc(db, "events", id);
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) setEvent({ id: docSnap.id, ...docSnap.data() });
+      try {
+        const snap = await get(ref(db, `events/${id}`));
+        if (snap.exists()) setEvent({ id: snap.key, ...snap.val() });
+      } catch (err) {
+        console.error(err);
+      }
     };
     fetchEvent();
   }, [id]);

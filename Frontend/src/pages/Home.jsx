@@ -1,7 +1,7 @@
 import React, { memo } from "react";
 import { useEffect, useState } from "react";
 import { db } from "../firebase/firebaseConfig";
-import { doc, onSnapshot } from "firebase/firestore";
+import { ref, onValue } from "firebase/database";
 import { Swiper, SwiperSlide } from "swiper/react";
 import { Navigation, Pagination, Autoplay, EffectFade } from "swiper/modules";
 import { useNavigate } from "react-router-dom";
@@ -20,11 +20,21 @@ function Home() {
   const [lightbox, setLightbox] = useState(null); // { imageURL, label }
 
   useEffect(() => {
-    const unsub = onSnapshot(doc(db, "homePage", "mainContent"), snap => {
-      if (snap.exists()) {
-        setHomeData(prev => JSON.stringify(prev) === JSON.stringify(snap.data()) ? prev : snap.data());
+    const unsub = onValue(
+      ref(db, "homePage/mainContent"),
+      (snap) => {
+        if (snap.exists()) {
+          const val = snap.val();
+          setHomeData(prev => JSON.stringify(prev) === JSON.stringify(val) ? prev : val);
+        } else {
+          setHomeData({});
+        }
+      },
+      (err) => {
+        console.error("Home onValue error:", err);
+        setHomeData({});
       }
-    });
+    );
     return () => unsub();
   }, []);
 

@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 
 import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
+import FloatingContact from "./components/FloatingContact";
 
 import Home from "./pages/Home";
 import About from "./pages/About";
@@ -34,9 +35,11 @@ function App() {
         <Route path="/" element={<Home />} />
         <Route path="/about" element={<About />} />
         <Route path="/services" element={<Services />} />
+        <Route path="/events" element={<Services />} />
         <Route path="/contact" element={<Contact />} />
         <Route path="/admin" element={<AdminLogin />} />
         <Route path="/services/:id" element={<Details />} />
+        <Route path="/events/:id" element={<Details />} />
         <Route path="/payment-success" element={<PaymentSuccess />} />
         <Route
           path="/admin/dashboard"
@@ -86,6 +89,8 @@ function App() {
       {/* Footer */}
       <Footer />
 
+      {/* Floating Contact Icons */}
+      <FloatingContact />
     </BrowserRouter>
   );
 }
