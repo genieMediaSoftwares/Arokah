@@ -5,15 +5,11 @@
  *
  *   cd backend
  *   npm run seed:admin -- --email you@example.com --password 'StrongPass123' --name 'Site Admin'
- *
- * Values can also come from SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD / SEED_ADMIN_NAME
- * in backend/.env. Passwords are hashed by the User model's pre-save hook, so
- * nothing plaintext ever reaches MongoDB.
  */
 
 const readline = require('readline');
 const { connectDatabase, disconnectDatabase } = require('../src/config/database');
-const User = require('../src/models/User');
+const userRepository = require('../src/repositories/user.repository');
 
 function parseArgs(argv) {
   const args = {};
@@ -36,7 +32,6 @@ function prompt(question, { hidden = false } = {}) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
 
     if (hidden) {
-      // Suppress the echo so the password never lands in terminal scrollback.
       process.stdout.write(question);
       // eslint-disable-next-line no-underscore-dangle
       rl._writeToOutput = () => {};
@@ -67,8 +62,6 @@ function validatePassword(password) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
 
-  // Nothing is defaulted: every value is supplied by the operator, so this
-  // script can never quietly create an account with predictable credentials.
   const rawEmail = args.email || process.env.SEED_ADMIN_EMAIL || (await prompt('Admin email: '));
   const email = String(rawEmail || '').toLowerCase();
   const name = args.name || process.env.SEED_ADMIN_NAME || (await prompt('Admin name: '));
@@ -88,23 +81,20 @@ async function main() {
 
   await connectDatabase();
 
-  const existing = await User.findOne({ email });
+  const existing = await userRepository.findByEmail(email);
   if (existing) {
-    existing.role = 'admin';
-    existing.isActive = true;
-    if (args['reset-password']) {
-      existing.password = password;
-      console.log(`Password reset for ${email}`);
+    await userRepository.update(existing.id, { name, role: 'admin', isActive: true });
+    if (args['reset-password'] || password) {
+      await userRepository.updatePassword(existing.id, password);
+      console.log(`Password set/reset for ${email}`);
     }
-    await existing.save();
-    console.log(`Existing account ${email} promoted to admin.`);
+    console.log(`Existing account ${email} updated to admin.`);
   } else {
-    await User.create({ name, email, password, role: 'admin', isActive: true });
+    await userRepository.create({ name, email, password, role: 'admin', isActive: true });
     console.log(`Admin account created: ${email}`);
   }
 
   console.log('\nSign in at /admin in the frontend with these credentials.');
-  console.log('Remove SEED_ADMIN_* from backend/.env now that the account exists.\n');
 }
 
 main()
