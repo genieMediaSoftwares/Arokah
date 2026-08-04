@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { db } from "../firebase/firebaseConfig";
-import { ref, get, update } from "firebase/database";
+import { getEvent, updateEvent } from "../services/eventService";
 import { toast } from "react-toastify";
 import { useNavigate, useParams } from "react-router-dom";
+import ImageUploader from "../components/ImageUploader";
+import logger from "../utils/logger";
 
 /* ─────────────────────────────────────────
    HELPERS  — 12h ↔ 24h conversion
@@ -127,9 +128,8 @@ function EditEvent() {
   useEffect(() => {
     const fetchEvent = async () => {
       try {
-        const snap = await get(ref(db, `events/${id}`));
-        if (snap.exists()) {
-          const d = snap.val();
+        const d = await getEvent(id);
+        if (d) {
           setTitle(d.title || "");
           setType(d.type || "");
           setPrice(d.price || "");
@@ -152,20 +152,32 @@ function EditEvent() {
           }
 
           const savedExtras = d.extras || d.extraFields || [];
-          setExtras(savedExtras.map((ex) => ({ ...ex, id: ex.id || Date.now() + Math.random() })));
+          // Reuse the server-side `key` as the local row id so re-saving keeps
+          // each add-on's identity stable instead of minting a new one.
+          setExtras(
+            savedExtras.map((ex) => ({
+              ...ex,
+              id: String(ex.key || ex.id || `extra-${Date.now()}-${Math.random()}`),
+            }))
+          );
         } else {
           toast.error("Event not found");
           navigate("/admin/dashboard");
         }
       } catch (err) {
-        console.error(err);
-        toast.error("Failed to load event");
+        logger.error("Failed to load event", err);
+        if (err?.status === 404) {
+          toast.error("Event not found");
+          navigate("/admin/dashboard");
+        } else {
+          toast.error(err?.message || "Failed to load event");
+        }
       } finally {
         setLoading(false);
       }
     };
     fetchEvent();
-  }, [id]);
+  }, [id, navigate]);
 
   /* ── Extras helpers ── */
   const addExtra = (category) =>
@@ -183,7 +195,7 @@ function EditEvent() {
     e.preventDefault();
     if (submitting) return;
     if (!title || !imageURL) {
-      toast.error("Event title & image URL are required");
+      toast.error("Event title and banner image are required");
       return;
     }
 
@@ -194,7 +206,7 @@ function EditEvent() {
 
     setSubmitting(true);
     try {
-      await update(ref(db, `events/${id}`), {
+      await updateEvent(id, {
         title, type, price, phone, location,
         eventDate,
         startTime: startTime24h,
@@ -205,13 +217,20 @@ function EditEvent() {
         mainImage: imageURL,
         extras,
         status,
-        updatedAt: new Date().toISOString(),
+        // updatedAt is stamped by the server.
       });
       toast.success("Event updated successfully!");
       navigate("/admin/dashboard");
     } catch (err) {
-      console.error("Error updating event:", err);
-      toast.error(err?.message || "Error updating event. Please try again.");
+      logger.error("Error updating event", err);
+      if (err?.status === 401 || err?.status === 403) {
+        toast.error("Your session has expired. Please sign in again.");
+        navigate("/admin");
+      } else if (err?.fieldErrors?.length) {
+        toast.error(err.fieldErrors[0].message);
+      } else {
+        toast.error(err?.message || "Error updating event. Please try again.");
+      }
     } finally {
       setSubmitting(false);
     }
@@ -272,7 +291,7 @@ function EditEvent() {
             <div>
               <h4 className="text-base font-bold text-purple-700 mb-1">Admin Quick Guide</h4>
               <ul className="text-sm text-purple-600 space-y-0.5 list-disc ml-4">
-                <li>Title and Image URL are <strong>required</strong> — everything else is optional but recommended.</li>
+                <li>Title and a banner image are <strong>required</strong> — everything else is optional but recommended.</li>
                 <li>Times are picked in <strong>12-hour AM/PM format</strong> directly.</li>
                 <li>Set status to <strong>Upcoming</strong> or <strong>Live</strong> — changes apply instantly.</li>
                 <li>In <strong>Section 06</strong>, add, edit, or remove Games, Food, Music, or any extras already saved.</li>
@@ -368,23 +387,16 @@ function EditEvent() {
             </Section>
 
             {/* ── 05 EVENT IMAGE ── */}
-            <Section number="05" title="Event Image" description="Paste a Cloudinary URL for the main event banner image. Use a high-res horizontal image for best results.">
+            <Section number="05" title="Event Image" description="Upload the main event banner image. A high-resolution horizontal photo works best.">
               <div>
-                <Label required>Image URL</Label>
-                <input placeholder="Paste Cloudinary image URL here…"
-                  value={imageURL} onChange={(e) => setImageURL(e.target.value)} className={inp} />
-                {imageURL ? (
-                  <div className="mt-4">
-                    <p className="text-sm text-slate-500 mb-2">Preview:</p>
-                    <img src={imageURL} alt="Event preview"
-                      className="w-full max-h-72 object-cover rounded-2xl border border-slate-200"
-                      onError={(e) => { e.target.style.display = "none"; toast.error("Invalid image URL — please check the link."); }} />
-                  </div>
-                ) : (
-                  <div className="mt-4 w-full h-40 rounded-2xl border-2 border-dashed border-slate-200 flex items-center justify-center bg-slate-50">
-                    <p className="text-slate-400 text-sm">Image preview will appear here</p>
-                  </div>
-                )}
+                <Label required>Event Banner</Label>
+                <ImageUploader
+                  value={imageURL}
+                  onChange={setImageURL}
+                  folder="events"
+                  aspect="aspect-[16/9]"
+                  hint="Replacing this image removes the old file from the server automatically."
+                />
               </div>
             </Section>
 
@@ -497,24 +509,19 @@ function EditEvent() {
                             value={extra.price} onChange={(e) => updateExtra(extra.id, "price", e.target.value)} className={inp} />
                         </div>
 
-                        {/* Image URL */}
-                        <div>
+                        {/* Item photo */}
+                        <div className="sm:col-span-2">
                           <label className="flex items-center gap-1.5 text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">
-                            Image URL <span className="text-slate-300 font-normal normal-case tracking-normal">— Optional photo</span>
+                            Photo <span className="text-slate-300 font-normal normal-case tracking-normal">— Optional</span>
                           </label>
-                          <input placeholder="Paste Cloudinary image URL for this item…"
-                            value={extra.imageURL} onChange={(e) => updateExtra(extra.id, "imageURL", e.target.value)} className={inp} />
+                          <ImageUploader
+                            value={extra.imageURL}
+                            onChange={(image) => updateExtra(extra.id, "imageURL", image)}
+                            folder="events"
+                            aspect="aspect-[16/9]"
+                            compact
+                          />
                         </div>
-
-                        {/* Image preview */}
-                        {extra.imageURL && (
-                          <div className="sm:col-span-2">
-                            <p className="text-xs text-slate-400 font-semibold mb-2 uppercase tracking-wider">Image Preview:</p>
-                            <img src={extra.imageURL} alt={extra.name || "Item preview"}
-                              className="h-44 w-full object-cover rounded-xl border border-slate-200"
-                              onError={(e) => { e.target.style.display = "none"; }} />
-                          </div>
-                        )}
                       </div>
                     </div>
                   );

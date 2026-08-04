@@ -1,7 +1,6 @@
 import React, { memo } from "react";
 import { useEffect, useState } from "react";
-import { db } from "../firebase/firebaseConfig";
-import { ref, onValue } from "firebase/database";
+import { getHomeContent } from "../services/homeService";
 import { Swiper, SwiperSlide } from "swiper/react";
 import { Navigation, Pagination, Autoplay, EffectFade } from "swiper/modules";
 import { useNavigate } from "react-router-dom";
@@ -9,6 +8,8 @@ import "swiper/css";
 import "swiper/css/navigation";
 import "swiper/css/pagination";
 import "swiper/css/effect-fade";
+import { resolveImageUrl } from "../utils/imageUrl";
+import logger from "../utils/logger";
 
 
 function Home() {
@@ -20,22 +21,25 @@ function Home() {
   const [lightbox, setLightbox] = useState(null); // { imageURL, label }
 
   useEffect(() => {
-    const unsub = onValue(
-      ref(db, "homePage/mainContent"),
-      (snap) => {
-        if (snap.exists()) {
-          const val = snap.val();
-          setHomeData(prev => JSON.stringify(prev) === JSON.stringify(val) ? prev : val);
-        } else {
-          setHomeData({});
-        }
-      },
-      (err) => {
-        console.error("Home onValue error:", err);
-        setHomeData({});
-      }
-    );
-    return () => unsub();
+    let cancelled = false;
+
+    getHomeContent()
+      .then((content) => {
+        if (cancelled) return;
+        // Keep the previous object when nothing changed so memoised children
+        // below don't re-render — the same guard the old listener used.
+        setHomeData((prev) =>
+          JSON.stringify(prev) === JSON.stringify(content) ? prev : content || {}
+        );
+      })
+      .catch((err) => {
+        logger.error("Failed to load home content", err);
+        if (!cancelled) setHomeData({});
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   if (!homeData) {
@@ -88,7 +92,7 @@ function Home() {
 
                   {/* Optimized image with lazy loading */}
                   <img
-                    src={img}
+                    src={resolveImageUrl(img)}
                     alt={`Hero slide ${i + 1}`}
 
                     className={`
@@ -171,12 +175,12 @@ function Home() {
                 <div className="grid grid-cols-2 gap-4">
 
                   <img
-                    src={homeData.storySection.image1}
+                    src={resolveImageUrl(homeData.storySection.image1)}
                     className="rounded-xl shadow-md w-full h-48 sm:h-64 object-cover"
                   />
 
                   <img
-                    src={homeData.storySection.image2}
+                    src={resolveImageUrl(homeData.storySection.image2)}
                     className="rounded-xl shadow-md w-full h-48 sm:h-64 object-cover mt-8"
                   />
 
@@ -215,14 +219,14 @@ function Home() {
               <div className="order-1 lg:order-2">
                 <div className="grid grid-cols-2 gap-3 sm:gap-4">
                   <img
-                    src={homeData.storySection.image1}
+                    src={resolveImageUrl(homeData.storySection.image1)}
                     className="rounded-xl shadow-md w-full h-40 sm:h-56 lg:h-64 object-cover"
                     alt="Story 1"
                     loading="lazy"
                     decoding="async"
                   />
                   <img
-                    src={homeData.storySection.image2}
+                    src={resolveImageUrl(homeData.storySection.image2)}
                     className="rounded-xl shadow-md w-full h-40 sm:h-56 lg:h-64 object-cover mt-6 sm:mt-8"
                     alt="Story 2"
                     loading="lazy"
@@ -279,7 +283,7 @@ function Home() {
                     {/* Overlay on hover */}
                     <div className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 z-10 rounded-2xl sm:rounded-3xl" />
                     <img
-                      src={homeData.pricingImage}
+                      src={resolveImageUrl(homeData.pricingImage)}
                       alt="Pricing Banner"
                       loading="lazy"
                       decoding="async"
@@ -309,7 +313,7 @@ function Home() {
                     {/* Overlay on hover */}
                     <div className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 z-10 rounded-2xl sm:rounded-3xl" />
                     <img
-                      src={homeData.promotionImage}
+                      src={resolveImageUrl(homeData.promotionImage)}
                       alt="Promotion Banner"
                       loading="lazy"
                       decoding="async"
@@ -347,7 +351,7 @@ function Home() {
                 onMouseLeave={() => setHoveredIndex(null)}
               >
                 <img
-                  src={src}
+                  src={resolveImageUrl(src)}
                   loading="lazy"
                   decoding="async"
                   className={`w-full h-full object-cover transition ${hoveredIndex === i ? "scale-110 brightness-75" : ""
@@ -394,7 +398,7 @@ function Home() {
                 {homeData.extraSections.map((sec, index) =>
                   sec.imageURL ? (
                     <div
-                      key={sec.id}
+                      key={sec.key || sec.id || index}
                       className="group relative overflow-hidden rounded-2xl cursor-pointer"
                       style={{
                         gridColumn: index % 7 === 0 ? "span 2" : "span 1",
@@ -403,7 +407,7 @@ function Home() {
                       onClick={() => setLightbox({ imageURL: sec.imageURL, label: sec.label })}
                     >
                       <img
-                        src={sec.imageURL}
+                        src={resolveImageUrl(sec.imageURL)}
                         alt={sec.label || "Gallery image"}
                         loading="lazy"
                         decoding="async"
@@ -455,7 +459,7 @@ function Home() {
                 >
                   {/* Image — no bg color, scales to fit screen naturally */}
                   <img
-                    src={lightbox.imageURL}
+                    src={resolveImageUrl(lightbox.imageURL)}
                     alt={lightbox.label || "Gallery image"}
                     className="max-w-full max-h-full w-auto h-auto object-contain rounded-2xl shadow-2xl"
                     style={{ maxHeight: "calc(100vh - 80px)", maxWidth: "calc(100vw - 80px)" }}

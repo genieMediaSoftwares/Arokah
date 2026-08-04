@@ -1,9 +1,13 @@
 import { Link, NavLink } from "react-router-dom";
 import { useState, useEffect } from "react";
+import { useSiteSettings } from "../context/siteSettingsContext";
+import { resolveImageUrl } from "../utils/imageUrl";
 
 function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const { settings } = useSiteSettings();
+  const logoUrl = resolveImageUrl(settings.logo);
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 10);
@@ -19,6 +23,9 @@ function Navbar() {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
+  // Structural, not content: each entry maps to a React Router route, so these
+  // stay in code rather than becoming admin-editable data that could point at a
+  // page that does not exist.
   const navLinks = [
     { label: "Home", to: "/" },
     { label: "About", to: "/about" },
@@ -75,14 +82,18 @@ function Navbar() {
 
           {/* ── Logo (Left Corner) ── */}
           <Link to="/" className="flex items-center gap-3 no-underline group">
-            <img
-              src="/arokah-logo.png"
-              alt="Arokah Logo"
-              className="w-[42px] h-[42px] rounded-full object-cover border border-purple-100 transition-all duration-300 group-hover:scale-110 shadow-sm"
-            />
-            <span className="text-[1.35rem] font-extrabold text-[#330962] tracking-tight leading-none">
-              Arokah
-            </span>
+            {logoUrl && (
+              <img
+                src={logoUrl}
+                alt={settings.companyName ? `${settings.companyName} logo` : "Logo"}
+                className="w-[42px] h-[42px] rounded-full object-cover border border-purple-100 transition-all duration-300 group-hover:scale-110 shadow-sm"
+              />
+            )}
+            {settings.companyName && (
+              <span className="text-[1.35rem] font-extrabold text-[#330962] tracking-tight leading-none">
+                {settings.companyName}
+              </span>
+            )}
           </Link>
 
           {/* ── Desktop Nav (Right Corner) ── */}

@@ -1,0 +1,2 @@
+# Keeps the uploads directory in git while its contents stay ignored.
+# Uploaded files are served from GET /uploads/<storageKey> (see src/app.js).

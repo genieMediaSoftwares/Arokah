@@ -1,4 +1,5 @@
 import React from "react";
+import { resolveImageUrl } from "../utils/imageUrl";
 
 const EventCard = ({ event }) => {
 
@@ -20,7 +21,7 @@ const EventCard = ({ event }) => {
 
       {/* Image */}
       <img
-        src={event.mainImage}
+        src={resolveImageUrl(event.mainImage)}
         alt={event.title}
         className="w-full h-48 object-cover"
       />

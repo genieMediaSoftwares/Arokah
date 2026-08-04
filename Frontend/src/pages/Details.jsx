@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { db } from "../firebase/firebaseConfig";
-import { ref, get } from "firebase/database";
+import { getEvent } from "../services/eventService";
+import { startCheckout } from "../services/paymentService";
 import { toast } from "react-toastify";
+import { resolveImageUrl } from "../utils/imageUrl";
+import logger from "../utils/logger";
 // ─── Booking Flow Modal ───────────────────────────────────────────────────────
 function BookingModal({ event, normalizedExtras, groupedExtras, basePrice, onClose, onConfirm }) {
   const [step, setStep] = useState(1);
@@ -175,7 +177,7 @@ function BookingModal({ event, normalizedExtras, groupedExtras, basePrice, onClo
                               }`}
                             >
                               {extra.imageURL ? (
-                                <img src={extra.imageURL} alt={extra.name} className="w-full h-24 object-cover" />
+                                <img src={resolveImageUrl(extra.imageURL)} alt={extra.name} className="w-full h-24 object-cover" />
                               ) : (
                                 <div className={`w-full h-16 flex items-center justify-center text-3xl ${c.light}`}>
                                   {label.split(" ")[0]}
@@ -320,17 +322,24 @@ function Details() {
   const [event, setEvent] = useState(null);
   const [showBookingModal, setShowBookingModal] = useState(false);
   const [imgLoaded, setImgLoaded] = useState(false);
+  // Guards against a double-submit opening two Razorpay orders for one booking.
+  const [processing, setProcessing] = useState(false);
 
   useEffect(() => {
-    const fetchEvent = async () => {
-      try {
-        const snap = await get(ref(db, `events/${id}`));
-        if (snap.exists()) setEvent({ id: snap.key, ...snap.val() });
-      } catch (err) {
-        console.error(err);
-      }
+    let cancelled = false;
+
+    getEvent(id)
+      .then((data) => {
+        if (!cancelled && data) setEvent(data);
+      })
+      .catch((err) => {
+        logger.error("Failed to load event", err);
+        if (!cancelled) toast.error(err?.message || "Could not load this event");
+      });
+
+    return () => {
+      cancelled = true;
     };
-    fetchEvent();
   }, [id]);
 
   if (!event)
@@ -365,7 +374,9 @@ function Details() {
     return `${start} – ${end}`;
   };
 
-  const normalizedExtras = (event.extras || []).map((e, i) => ({ ...e, _key: e.id || e.name || `extra_${i}` }));
+  // `_key` mirrors the stable `key` the backend stores for each add-on, so the
+  // selection the user makes here can be sent back for server-side pricing.
+  const normalizedExtras = (event.extras || []).map((e, i) => ({ ...e, _key: e.key || e.id || e.name || `extra_${i}` }));
   const groupedExtras = normalizedExtras.reduce((acc, extra) => {
     const cat = extra.category || "other";
     if (!acc[cat]) acc[cat] = [];
@@ -374,107 +385,47 @@ function Details() {
   }, {});
 
   const basePrice = event.price ? extractPrice(event.price) : 0;
-// const handleConfirmBooking = (quantity, selectedExtras, totalPrice, extras) => {
 
-//   if (totalPrice <= 0) {
-//     toast.error("Invalid amount");
-//     return;
-//   }
+  /**
+   * Hands the booking to the backend, which prices it, creates the Razorpay
+   * order, and verifies the signature afterwards. Note that `totalPrice` from
+   * the modal is used only to show the customer a running total — the amount
+   * actually charged is calculated server-side from the stored event.
+   */
+  const handleConfirmBooking = async (quantity, selectedExtras) => {
+    if (processing) return;
 
-//   const options = {
-//     key: "YOUR_REAL_TEST_KEY",
-//     amount: totalPrice * 100,
-//     currency: "INR",
-//     name: "Event Booking",
-//     description: event.title,
-//     image: event.mainImage,
+    const extraKeys = normalizedExtras
+      .filter((extra) => selectedExtras[extra._key])
+      .map((extra) => extra._key);
 
-//     handler: function (response) {
-//       console.log("SUCCESS:", response);
-
-//       // 🔥 FORCE CLEANUP
-//       document.body.style.overflow = "auto";
-//       setShowBookingModal(false);
-
-//       toast.success("Payment Successful!");
-
-//       // optional redirect
-//       navigate("/");
-//     },
-
-//     modal: {
-//       ondismiss: function () {
-//         console.log("Payment closed");
-
-//         // 🔥 FORCE CLEANUP
-//         document.body.style.overflow = "auto";
-//         setShowBookingModal(false);
-
-//         toast.error("Payment Cancelled");
-//       }
-//     },
-
-//     theme: {
-//       color: "#7c3aed"
-//     }
-//   };
-
-//   if (!window.Razorpay) {
-//     toast.error("Razorpay failed to load");
-//     return;
-//   }
-
-//   const rzp = new window.Razorpay(options);
-
-//   // 🔥 IMPORTANT
-// document.body.style.overflow = "auto";
-//   rzp.open();
-// };
-const handleConfirmBooking = (quantity, selectedExtras, totalPrice) => {
-
-  if (totalPrice <= 0) {
-    toast.error("Invalid amount");
-    return;
-  }
-
-  const options = {
-    key: import.meta.env.VITE_RAZORPAY_KEY, // 🔥 Replace with your real key
-    amount: totalPrice * 100,  // ✅ dynamic amount
-    currency: "INR",
-    name: "Event Booking",
-    description: event.title,
-
-    handler: function (response) {
-      console.log("SUCCESS:", response);
+    setProcessing(true);
+    try {
+      const result = await startCheckout({
+        eventId: event.id,
+        quantity,
+        extraKeys,
+        event,
+      });
 
       document.body.style.overflow = "auto";
       setShowBookingModal(false);
 
-      toast.success("Payment Successful!");
-      navigate("/");
-    },
-
-    modal: {
-      ondismiss: function () {
-        document.body.style.overflow = "auto";
-        setShowBookingModal(false);
+      if (result.status === "confirmed") {
+        toast.success("Payment Successful!");
+        navigate("/payment-success", { state: { booking: result.booking } });
+      } else {
         toast.error("Payment Cancelled");
       }
-    },
-
-    theme: {
-      color: "#7c3aed"
+    } catch (err) {
+      document.body.style.overflow = "auto";
+      setShowBookingModal(false);
+      toast.error(err?.message || "Payment failed. Please try again.");
+    } finally {
+      setProcessing(false);
     }
   };
 
-  if (!window.Razorpay) {
-    toast.error("Razorpay failed to load");
-    return;
-  }
-
-  const rzp = new window.Razorpay(options);
-  rzp.open();
-};
   return (
     <div className="bg-slate-50 min-h-screen pt-14 pb-28 lg:pb-12">
 
@@ -554,7 +505,7 @@ const handleConfirmBooking = (quantity, selectedExtras, totalPrice) => {
                   <div className="absolute inset-0 bg-slate-100 animate-pulse" />
                 )}
                 <img
-                  src={event.mainImage}
+                  src={resolveImageUrl(event.mainImage)}
                   alt={event.title}
                   onLoad={() => setImgLoaded(true)}
                   className={`w-full h-52 sm:h-64 lg:h-80 object-cover transition-opacity duration-500 ${imgLoaded ? "opacity-100" : "opacity-0"}`}

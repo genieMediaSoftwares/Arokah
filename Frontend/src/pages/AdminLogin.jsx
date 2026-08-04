@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { signInWithEmailAndPassword } from "firebase/auth";
-import { auth } from "../firebase/firebaseConfig";
+import { useAdminAuth } from "../context/authContext";
 import { toast } from "react-toastify";
 import { FaEye, FaEyeSlash } from "react-icons/fa";
 import { useNavigate } from "react-router-dom";
@@ -9,7 +8,9 @@ function AdminLogin() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
+  const { login } = useAdminAuth();
   const navigate = useNavigate();
 
   const handleLogin = async (e) => {
@@ -20,15 +21,25 @@ function AdminLogin() {
       return;
     }
 
+    setSubmitting(true);
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      const user = await login({ email, password });
+
+      // Only staff accounts belong in the admin area.
+      if (!["admin", "staff"].includes(user?.role)) {
+        toast.error("This account does not have admin access");
+        return;
+      }
+
       toast.success("Admin login successful");
 
       // redirect after login
       navigate("/admin/dashboard");
 
     } catch (error) {
-      toast.error("Invalid admin credentials");
+      toast.error(error?.message || "Invalid admin credentials");
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -68,9 +79,10 @@ function AdminLogin() {
 
         <button
           type="submit"
-          className="bg-[#330962] border text-white hover:bg-white hover:text-[#330962] hover:border-[#330962] py-3 rounded-md"
+          disabled={submitting}
+          className="bg-[#330962] border text-white hover:bg-white hover:text-[#330962] hover:border-[#330962] disabled:opacity-60 py-3 rounded-md"
         >
-          Login
+          {submitting ? "Signing in…" : "Login"}
         </button>
       </form>
 

@@ -16,7 +16,7 @@ import AdminDashboard from "./pages/AdminDashboard";
 import AddEvent from "./pages/AddEvent";
 import EditEvent from "./pages/EditEvent";
 import AdminHomeContent from "./pages/AdminHomeContent";
-// import ViewBookings from "./pages/ViewBookings";
+import AdminSiteSettings from "./pages/AdminSiteSettings";
 import Details from "./pages/Details";
 import ScrollToTop from "./components/ScrollToTop";
 import PaymentSuccess from "./components/PaymentSuccess";
@@ -75,15 +75,14 @@ function App() {
             </AdminProtectedRoute>
           }
         />
-        {/* <Route
-          path="/admin/bookings"
+        <Route
+          path="/admin/site-settings"
           element={
             <AdminProtectedRoute>
-              <ViewBookings />
+              <AdminSiteSettings />
             </AdminProtectedRoute>
           }
-        /> */}
-
+        />
       </Routes>
 
       {/* Footer */}

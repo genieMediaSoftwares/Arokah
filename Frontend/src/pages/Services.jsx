@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { db } from "../firebase/firebaseConfig";
-import { ref, onValue } from "firebase/database";
+import { listEvents } from "../services/eventService";
 import { useNavigate } from "react-router-dom";
+import { resolveImageUrl } from "../utils/imageUrl";
+import logger from "../utils/logger";
 
 /* ── Helpers ── */
 const displayTime = (event) => {
@@ -42,25 +43,24 @@ function Services() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const unsub = onValue(
-      ref(db, "events"),
-      (snap) => {
-        const val = snap.val() || {};
-        const data = Object.keys(val).map((k) => ({ id: k, ...val[k] }));
-        data.sort((a, b) => {
-          const order = { live: 0, upcoming: 1 };
-          const diff  = (order[a.status] ?? 2) - (order[b.status] ?? 2);
-          return diff !== 0 ? diff : String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
-        });
+    let cancelled = false;
+
+    // The backend already returns live events first, then upcoming, newest
+    // first within each group — the sort this component used to do itself.
+    listEvents({ limit: 100 })
+      .then(({ events: data }) => {
+        if (cancelled) return;
         setEvents(data);
         setLoading(false);
-      },
-      (err) => {
-        console.error("Services onValue error:", err);
-        setLoading(false);
-      }
-    );
-    return () => unsub();
+      })
+      .catch((err) => {
+        logger.error("Failed to load events", err);
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -89,7 +89,7 @@ function Services() {
         {featuredEvent ? (
           <>
             <div className="s-hero-bg"
-              style={{ backgroundImage: featuredEvent.mainImage ? `url(${featuredEvent.mainImage})` : "none" }} />
+              style={{ backgroundImage: featuredEvent.mainImage ? `url(${resolveImageUrl(featuredEvent.mainImage)})` : "none" }} />
             <div className="s-hero-overlay" />
             <div className="s-hero-inner">
               <div className="s-hero-text">
@@ -126,7 +126,7 @@ function Services() {
               </div>
               {featuredEvent.mainImage && (
                 <div className="s-hero-thumb">
-                  <img src={featuredEvent.mainImage} alt={featuredEvent.title} />
+                  <img src={resolveImageUrl(featuredEvent.mainImage)} alt={featuredEvent.title} />
                 </div>
               )}
             </div>
@@ -609,7 +609,7 @@ function EventCard({ event, idx, onClick }) {
       {/* Image */}
       <div className="s-cimg-wrap">
         {event.mainImage
-          ? <img src={event.mainImage} alt={event.title} className="s-cimg" />
+          ? <img src={resolveImageUrl(event.mainImage)} alt={event.title} className="s-cimg" />
           : <div className="s-cimg-placeholder">🎉</div>}
         <div className="s-cimg-grad" />
 

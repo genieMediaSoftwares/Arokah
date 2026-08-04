@@ -1,0 +1,28 @@
+# Secrets — every environment file, no exceptions and no tracked templates.
+.env
+*.env
+.env.*
+
+# Dependencies
+node_modules/
+
+# Uploaded files (user content, not source).
+# Ignore the contents, not the directory — git cannot re-include a file whose
+# parent directory is excluded.
+uploads/*
+!uploads/.gitkeep
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Runtime / OS / editor
+.DS_Store
+Thumbs.db
+coverage/
+.nyc_output/
+*.pid
+.vscode/*
+!.vscode/extensions.json
+.idea/
