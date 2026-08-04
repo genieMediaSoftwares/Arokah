@@ -34,7 +34,12 @@ app.use(
   })
 );
 
+// CORS runs before the body parsers, the routes, the rate limiter and every
+// auth check, so a preflight is answered without touching any of them.
 app.use(cors(corsOptions));
+// The line above already answers OPTIONS for every path; this is kept as an
+// explicit guarantee that preflight is never shadowed by a later handler.
+app.options('*', cors(corsOptions));
 app.use(compression());
 
 /**
