@@ -1,9 +1,8 @@
 'use strict';
 
-const SiteSettings = require('../models/SiteSettings');
+const siteSettingsRepository = require('../repositories/siteSettings.repository');
 const imageCleanup = require('./imageCleanup.service');
-
-const { SINGLETON_KEY } = SiteSettings;
+const { SITE_SETTINGS_KEY } = require('../constants');
 
 /**
  * The shape returned when nothing has been saved yet.
@@ -26,16 +25,14 @@ function emptySettings() {
 }
 
 async function getSettings() {
-  const doc = await SiteSettings.findOne({ key: SINGLETON_KEY }).lean();
-  if (!doc) return emptySettings();
+  const data = await siteSettingsRepository.get(SITE_SETTINGS_KEY);
+  if (!data) return emptySettings();
 
-  const { _id, key, __v, updatedBy, ...rest } = doc;
   const empty = emptySettings();
+  const { id, updatedBy, createdAt, updatedAt, ...rest } = data;
 
-  // Merge over the empty shape so a document saved before a field existed still
-  // returns that field rather than `undefined`.
   return {
-    id: String(_id),
+    id,
     ...empty,
     ...rest,
     contact: { ...empty.contact, ...(rest.contact || {}) },
@@ -70,20 +67,14 @@ async function saveSettings(payload, actorId) {
     updatedBy: actorId,
   };
 
-  // Snapshot first so a replaced logo or about-image gets reclaimed from disk.
-  const before = await SiteSettings.findOne({ key: SINGLETON_KEY }).lean();
-
-  const doc = await SiteSettings.findOneAndUpdate(
-    { key: SINGLETON_KEY },
-    { $set: update },
-    { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
-  );
+  const before = await siteSettingsRepository.get(SITE_SETTINGS_KEY);
+  const result = await siteSettingsRepository.save(update, actorId, SITE_SETTINGS_KEY);
 
   if (before) {
-    await imageCleanup.removeOrphans(before, doc.toObject(), { ignoreSiteSettings: true });
+    await imageCleanup.removeOrphans(before, result, { ignoreSiteSettings: true });
   }
 
-  return doc.toJSON();
+  return result;
 }
 
 module.exports = { getSettings, saveSettings, emptySettings };

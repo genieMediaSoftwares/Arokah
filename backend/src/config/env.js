@@ -185,6 +185,9 @@ const env = {
 };
 
 /** Rules that only apply once real traffic and real money are involved. */
+/** Non-fatal advisories, printed once at boot. */
+const warnings = [];
+
 function productionChecks() {
   const problems = [];
 
@@ -204,8 +207,13 @@ function productionChecks() {
     problems.push('COOKIE_SECRET must differ from JWT_SECRET');
   }
 
+  // Deliberately not fatal: pointing a locally-run frontend at a deployed
+  // staging backend is a legitimate workflow, and refusing to boot would block
+  // it. Still worth saying out loud, because shipping to real production with
+  // localhost allowed lets any page served from a developer machine call this
+  // API with credentials.
   if (env.CORS_ORIGINS.some((origin) => origin.includes('localhost'))) {
-    problems.push('CORS_ORIGINS still contains localhost — set it to your real frontend origin');
+    warnings.push('CORS_ORIGINS contains localhost — remove it once the frontend is deployed');
   }
 
   // The refresh cookie is Secure in production, so it is simply never sent over
@@ -232,5 +240,8 @@ if (problems.length > 0) {
   );
   process.exit(1);
 }
+
+// Surfaced by server.js once the logger is available — env.js runs before it.
+env.configWarnings = warnings;
 
 module.exports = env;

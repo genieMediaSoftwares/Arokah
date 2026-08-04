@@ -6,7 +6,7 @@ const controller = require('../controllers/admin.controller');
 const validate = require('../middleware/validate');
 const { protect, authorize } = require('../middleware/auth');
 const { objectIdParam, paginationQuery } = require('../validators/common.validator');
-const { ROLES } = require('../models/User');
+const { ROLES } = require('../constants');
 
 const router = express.Router();
 

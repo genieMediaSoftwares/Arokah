@@ -3,7 +3,7 @@
 const crypto = require('crypto');
 const uploadConfig = require('../../config/upload');
 const logger = require('../../config/logger');
-const FileAsset = require('../../models/FileAsset');
+const fileAssetRepository = require('../../repositories/fileAsset.repository');
 const ApiError = require('../../utils/ApiError');
 const { verifyImage } = require('../../utils/imageSignature');
 const LocalStorageDriver = require('./localStorage.driver');
@@ -46,16 +46,10 @@ function resolveFolder(raw) {
 
 /**
  * Verifies the bytes, stores them via the active driver, and records metadata.
- *
- * Returns `{ id, image, ... }` where `image` is the value to persist — a
- * root-relative path under the local driver, an absolute URL under S3. Callers
- * never learn where the bytes physically live.
  */
 async function storeImage(file, { folder = uploadConfig.defaultFolder, uploadedBy = null } = {}) {
   if (!file || !file.buffer) throw ApiError.badRequest('No image was uploaded');
 
-  // Authoritative check: the filename and Content-Type are client-controlled,
-  // the leading bytes are not.
   const verdict = verifyImage(file.buffer, {
     mimeType: file.mimetype,
     originalName: file.originalname,
@@ -70,10 +64,10 @@ async function storeImage(file, { folder = uploadConfig.defaultFolder, uploadedB
     mimeType: file.mimetype,
     folder: safeFolder,
     prefix: UPLOAD_FOLDERS[safeFolder],
-    extension: verdict.extension, // derived from content, never from the name
+    extension: verdict.extension,
   });
 
-  const asset = await FileAsset.create({
+  const asset = await fileAssetRepository.create({
     storageKey: key,
     driver: driverName,
     originalName: sanitizeOriginalName(file.originalname),
@@ -87,13 +81,6 @@ async function storeImage(file, { folder = uploadConfig.defaultFolder, uploadedB
   return toPublicAsset(asset);
 }
 
-/**
- * Deletes the bytes for a stored public path and drops its FileAsset row.
- *
- * Silently ignores anything that is not one of our own uploads — legacy
- * absolute URLs from the Firebase era point at other people's servers and must
- * never be treated as deletable.
- */
 async function deleteByPath(publicPath) {
   const active = getDriver();
   const key = active.toStorageKey(publicPath);
@@ -107,28 +94,26 @@ async function deleteByPath(publicPath) {
     return { deleted: false, reason: 'delete-failed' };
   }
 
-  await FileAsset.deleteOne({ storageKey: key }).catch(() => {});
+  await fileAssetRepository.deleteByStorageKey(key).catch(() => {});
   return { deleted: removed, key };
 }
 
 async function deleteById(assetId) {
-  const asset = await FileAsset.findById(assetId);
+  const asset = await fileAssetRepository.findById(assetId);
   if (!asset) throw ApiError.notFound('File not found');
 
   await getDriver().delete(asset.storageKey);
-  await asset.deleteOne();
-  return { id: String(asset._id) };
+  await fileAssetRepository.deleteById(assetId);
+  return { id: String(asset.id) };
 }
 
-/** True when a value is one of our own uploads rather than an external URL. */
 function isManagedPath(value) {
   return Boolean(getDriver().toStorageKey(value));
 }
 
 function toPublicAsset(asset) {
   return {
-    id: String(asset._id),
-    // The value that gets stored in MongoDB and rendered by the frontend.
+    id: String(asset.id),
     image: getDriver().getPublicUrl(asset.storageKey),
     originalName: asset.originalName,
     mimeType: asset.mimeType,
@@ -138,7 +123,6 @@ function toPublicAsset(asset) {
   };
 }
 
-/** Strips path components and control characters from a user-supplied name. */
 function sanitizeOriginalName(name) {
   return String(name || 'upload')
     .replace(/[\\/]/g, '_')

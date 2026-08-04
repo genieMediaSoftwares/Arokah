@@ -1,10 +1,9 @@
 'use strict';
 
 const { body, query } = require('express-validator');
-const { CONTACT_STATUSES } = require('../models/ContactMessage');
+const { CONTACT_STATUSES } = require('../constants');
 const { paginationQuery, objectIdParam } = require('./common.validator');
 
-// Mirrors exactly what the existing Contact.jsx form collects and requires.
 const submitEnquiryRules = [
   body('name').trim().notEmpty().withMessage('Name is required').isLength({ max: 120 }),
   body('phone')

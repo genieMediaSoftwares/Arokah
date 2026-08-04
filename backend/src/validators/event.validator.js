@@ -1,7 +1,7 @@
 'use strict';
 
 const { body, query } = require('express-validator');
-const { EVENT_STATUSES, EXTRA_CATEGORIES } = require('../models/Event');
+const { EVENT_STATUSES, EXTRA_CATEGORIES } = require('../constants');
 const { imageUrl, paginationQuery } = require('./common.validator');
 
 const TIME_24H = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -23,8 +23,6 @@ const extrasRules = [
 
 const sharedEventRules = [
   optionalText('type', 100),
-  // Free text so "Free", "₹499" and "1200 onwards" all keep working; the numeric
-  // amount used for payments is derived server-side by Event.parsePrice.
   optionalText('price', 50),
   optionalText('phone', 20),
   optionalText('location', 300),

@@ -1,6 +1,6 @@
 'use strict';
 
-const ActivityLog = require('../models/ActivityLog');
+const activityLogRepository = require('../repositories/activityLog.repository');
 const logger = require('../config/logger');
 
 /**
@@ -9,7 +9,7 @@ const logger = require('../config/logger');
  */
 function record({ req, action, entityType, entityId, metadata }) {
   const entry = {
-    actor: req?.user?._id || null,
+    actor: req?.user?._id || req?.user?.id || null,
     actorEmail: req?.user?.email || '',
     action,
     entityType: entityType || '',
@@ -18,18 +18,13 @@ function record({ req, action, entityType, entityId, metadata }) {
     ipAddress: req?.ip || '',
   };
 
-  ActivityLog.create(entry).catch((err) => {
+  activityLogRepository.create(entry).catch((err) => {
     logger.warn('Failed to write activity log', { action, error: err.message });
   });
 }
 
 function list({ skip = 0, limit = 50, filter = {} } = {}) {
-  return ActivityLog.find(filter)
-    .sort({ createdAt: -1 })
-    .skip(skip)
-    .limit(limit)
-    .populate('actor', 'name email role')
-    .lean();
+  return activityLogRepository.list({ skip, limit, filter });
 }
 
 module.exports = { record, list };

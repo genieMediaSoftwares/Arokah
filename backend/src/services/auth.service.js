@@ -1,22 +1,22 @@
 'use strict';
 
-const User = require('../models/User');
-const RefreshToken = require('../models/RefreshToken');
+const userRepository = require('../repositories/user.repository');
+const refreshTokenRepository = require('../repositories/refreshToken.repository');
 const ApiError = require('../utils/ApiError');
 const logger = require('../config/logger');
 const { signAccessToken, signRefreshToken, verifyRefreshToken, hashToken } = require('../utils/jwt');
 
 /** Issues an access/refresh pair and persists the refresh token's digest. */
 async function issueTokens(user, { userAgent = '', ipAddress = '' } = {}) {
-  const accessToken = signAccessToken(user);
-  const { token: refreshToken, tokenId, expiresAt } = signRefreshToken(user);
+  const accessToken = signAccessToken({ _id: user.id, role: user.role });
+  const { token: refreshToken, tokenId, expiresAt } = signRefreshToken({ _id: user.id, role: user.role });
 
-  await RefreshToken.create({
-    user: user._id,
+  await refreshTokenRepository.create({
+    userId: user.id,
     tokenId,
     tokenHash: hashToken(refreshToken),
     expiresAt,
-    userAgent: String(userAgent).slice(0, 300),
+    userAgent,
     ipAddress,
   });
 
@@ -24,34 +24,36 @@ async function issueTokens(user, { userAgent = '', ipAddress = '' } = {}) {
 }
 
 async function register({ name, email, phone, password }, context = {}) {
-  const existing = await User.findOne({ email: email.toLowerCase() });
-  if (existing) throw ApiError.conflict('An account with this email already exists');
+  if (await userRepository.existsByEmail(email)) {
+    throw ApiError.conflict('An account with this email already exists');
+  }
 
   // Role is never taken from the request body — self-service signup is always a
   // customer. Admins are created by scripts/seed-admin.js or by another admin.
-  const user = await User.create({ name, email, phone, password, role: 'customer' });
-  const tokens = await issueTokens(user, context);
+  const row = await userRepository.create({ name, email, phone, password, role: 'customer' });
+  const user = userRepository.toApi(row);
 
-  return { user: user.toJSON(), ...tokens };
+  const tokens = await issueTokens(user, context);
+  return { user, ...tokens };
 }
 
 async function login({ email, password }, context = {}) {
-  const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
+  const row = await userRepository.findByEmailWithSecrets(email);
 
   // Identical error for "no such user" and "wrong password" so the endpoint
   // cannot be used to enumerate registered email addresses.
   const invalid = ApiError.unauthorized('Invalid email or password');
-  if (!user) throw invalid;
+  if (!row) throw invalid;
 
-  const matches = await user.comparePassword(password);
+  const matches = await userRepository.comparePassword(password, row.password);
   if (!matches) throw invalid;
-  if (!user.isActive) throw ApiError.forbidden('This account has been deactivated');
+  if (!row.is_active) throw ApiError.forbidden('This account has been deactivated');
 
-  user.lastLoginAt = new Date();
-  await user.save({ validateBeforeSave: false });
+  await userRepository.touchLastLogin(row.id);
 
+  const user = userRepository.toApi(row);
   const tokens = await issueTokens(user, context);
-  return { user: user.toJSON(), ...tokens };
+  return { user, ...tokens };
 }
 
 /**
@@ -63,62 +65,59 @@ async function refresh(presentedToken, context = {}) {
   if (!presentedToken) throw ApiError.unauthorized('No refresh token provided');
 
   const payload = verifyRefreshToken(presentedToken);
-  const stored = await RefreshToken.findOne({ tokenId: payload.jti });
+  const stored = await refreshTokenRepository.findByTokenId(payload.jti);
 
   if (!stored) throw ApiError.unauthorized('Session not recognised', { code: 'TOKEN_INVALID' });
 
-  if (stored.revokedAt) {
-    logger.warn('Refresh token reuse detected — revoking all sessions', { userId: String(stored.user) });
-    await RefreshToken.updateMany({ user: stored.user, revokedAt: null }, { $set: { revokedAt: new Date() } });
+  if (stored.revoked_at) {
+    logger.warn('Refresh token reuse detected — revoking all sessions', { userId: stored.user_id });
+    await refreshTokenRepository.revokeAllForUser(stored.user_id);
     throw ApiError.unauthorized('Session expired. Please sign in again.', { code: 'TOKEN_REUSED' });
   }
 
-  if (stored.tokenHash !== hashToken(presentedToken)) {
+  if (stored.token_hash !== hashToken(presentedToken)) {
     throw ApiError.unauthorized('Session not recognised', { code: 'TOKEN_INVALID' });
   }
-  if (!stored.isActive()) throw ApiError.unauthorized('Session expired', { code: 'TOKEN_EXPIRED' });
+  if (!refreshTokenRepository.isActive(stored)) {
+    throw ApiError.unauthorized('Session expired', { code: 'TOKEN_EXPIRED' });
+  }
 
-  const user = await User.findById(stored.user);
-  if (!user || !user.isActive) throw ApiError.unauthorized('Account is no longer active');
+  const row = await userRepository.findById(stored.user_id);
+  if (!row || !row.is_active) throw ApiError.unauthorized('Account is no longer active');
 
+  const user = userRepository.toApi(row);
   const tokens = await issueTokens(user, context);
 
-  stored.revokedAt = new Date();
-  stored.replacedBy = decodeJti(tokens.refreshToken);
-  await stored.save();
+  await refreshTokenRepository.revoke(payload.jti, decodeJti(tokens.refreshToken));
 
-  return { user: user.toJSON(), ...tokens };
+  return { user, ...tokens };
 }
 
 async function logout(presentedToken) {
   if (!presentedToken) return;
   try {
     const payload = verifyRefreshToken(presentedToken);
-    await RefreshToken.updateOne(
-      { tokenId: payload.jti, revokedAt: null },
-      { $set: { revokedAt: new Date() } }
-    );
+    await refreshTokenRepository.revoke(payload.jti);
   } catch {
     // Logging out with an already-invalid token is a no-op, not an error.
   }
 }
 
 async function logoutAll(userId) {
-  await RefreshToken.updateMany({ user: userId, revokedAt: null }, { $set: { revokedAt: new Date() } });
+  await refreshTokenRepository.revokeAllForUser(userId);
 }
 
 async function changePassword(userId, { currentPassword, newPassword }) {
-  const user = await User.findById(userId).select('+password');
-  if (!user) throw ApiError.notFound('Account not found');
+  const row = await userRepository.findByIdWithSecrets(userId);
+  if (!row) throw ApiError.notFound('Account not found');
 
-  const matches = await user.comparePassword(currentPassword);
+  const matches = await userRepository.comparePassword(currentPassword, row.password);
   if (!matches) throw ApiError.unauthorized('Current password is incorrect');
 
-  user.password = newPassword; // pre-save hook hashes it and bumps tokensValidFrom
-  await user.save();
-
-  // Every existing session is invalidated once the password changes.
+  // Also advances tokens_valid_from, so tokens minted earlier stop working.
+  await userRepository.updatePassword(userId, newPassword);
   await logoutAll(userId);
+
   return { success: true };
 }
 

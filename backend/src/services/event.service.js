@@ -1,18 +1,21 @@
 'use strict';
 
 const crypto = require('crypto');
-const Event = require('../models/Event');
 const eventRepository = require('../repositories/event.repository');
 const imageCleanup = require('./imageCleanup.service');
 const ApiError = require('../utils/ApiError');
 
 const PUBLIC_STATUSES = ['upcoming', 'live'];
 
-/**
- * Normalises the extras array coming from the admin forms. The React UI keys
- * each row with `Date.now()`, so we accept whatever it sends and fall back to a
- * generated key — the key only has to be stable within one event.
- */
+function parsePrice(raw) {
+  if (raw === null || raw === undefined) return 0;
+  if (typeof raw === 'number') return Math.max(0, Math.round(raw));
+  const digits = String(raw).replace(/[^\d.]/g, '');
+  if (!digits) return 0;
+  const parsed = Number.parseFloat(digits);
+  return Number.isNaN(parsed) ? 0 : Math.max(0, Math.round(parsed));
+}
+
 function normalizeExtras(extras = []) {
   return extras
     .filter((extra) => extra && (extra.name || extra.imageURL))
@@ -32,15 +35,7 @@ function buildListFilter({ status, search, includeAll = false }) {
   if (status && status !== 'all') {
     filter.status = status;
   } else if (!includeAll) {
-    // Public listings never expose cancelled or completed events.
     filter.status = { $in: PUBLIC_STATUSES };
-  }
-
-  if (search) {
-    // Escaped so a user-supplied "(" cannot blow up the regex compiler.
-    const safe = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const rx = new RegExp(safe, 'i');
-    filter.$or = [{ title: rx }, { type: rx }, { location: rx }];
   }
 
   return filter;
@@ -53,17 +48,13 @@ async function listEvents({ status, search, page = 1, limit = 50, includeAll = f
   const [events, total] = await Promise.all([
     eventRepository.findAllByStatusPriority({
       filter,
-      // Live first, then upcoming, everything else last, newest-first within
-      // each group — the ordering Services.jsx used to compute client-side.
-      priority: { live: 0, upcoming: 1 },
-      fallbackRank: 2,
       skip,
       limit,
     }),
     eventRepository.count(filter),
   ]);
 
-  return { events: events.map(withId), total, page, limit };
+  return { events: events.map((e) => e.toJSON()), total, page, limit };
 }
 
 async function getEvent(id, { includeAll = false } = {}) {
@@ -89,19 +80,17 @@ async function updateEvent(id, payload, actorId) {
   const existing = await eventRepository.findByIdOrLegacyId(id);
   if (!existing) throw ApiError.notFound('Event not found');
 
-  // Snapshot the images before mutating so replaced files can be reclaimed.
   const before = existing.toObject();
 
-  Object.assign(existing, payload);
-  if (payload.extras !== undefined) existing.extras = normalizeExtras(payload.extras);
-  existing.updatedBy = actorId;
+  const updated = await eventRepository.update(existing.id, {
+    ...payload,
+    extras: payload.extras !== undefined ? normalizeExtras(payload.extras) : undefined,
+    updatedBy: actorId,
+  });
 
-  await existing.save();
+  await imageCleanup.removeOrphans(before, updated.toObject(), { ignoreEventId: existing.id });
 
-  // After the save, so a failed write never deletes a file that is still in use.
-  await imageCleanup.removeOrphans(before, existing.toObject(), { ignoreEventId: existing._id });
-
-  return existing.toJSON();
+  return updated.toJSON();
 }
 
 async function deleteEvent(id) {
@@ -109,21 +98,14 @@ async function deleteEvent(id) {
   if (!existing) throw ApiError.notFound('Event not found');
 
   const snapshot = existing.toObject();
-  await existing.deleteOne();
-  await imageCleanup.removeAllFor(snapshot, { ignoreEventId: existing._id });
+  await eventRepository.deleteById(existing.id);
+  await imageCleanup.removeAllFor(snapshot, { ignoreEventId: existing.id });
 
-  return { id: String(existing._id), title: existing.title };
+  return { id: String(existing.id), title: existing.title };
 }
 
 function getStats() {
   return eventRepository.statusCounts();
-}
-
-/** `.lean()` skips the schema's toJSON transform, so add `id` back here. */
-function withId(doc) {
-  if (!doc) return doc;
-  const { _id, ...rest } = doc;
-  return { id: String(_id), ...rest };
 }
 
 module.exports = {
@@ -134,5 +116,5 @@ module.exports = {
   deleteEvent,
   getStats,
   normalizeExtras,
-  parsePrice: Event.parsePrice,
+  parsePrice,
 };

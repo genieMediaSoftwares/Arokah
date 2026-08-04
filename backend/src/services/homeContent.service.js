@@ -1,10 +1,9 @@
 'use strict';
 
 const crypto = require('crypto');
-const HomeContent = require('../models/HomeContent');
+const homeContentRepository = require('../repositories/homeContent.repository');
 const imageCleanup = require('./imageCleanup.service');
-
-const { SINGLETON_KEY } = HomeContent;
+const { HOME_CONTENT_KEY } = require('../constants');
 
 const EMPTY_STORY = { title: '', description1: '', description2: '', image1: '', image2: '' };
 
@@ -23,7 +22,7 @@ function normalizeSections(sections = []) {
  * a fresh install renders a blank homepage instead of erroring.
  */
 async function getHomeContent() {
-  const doc = await HomeContent.findOne({ key: SINGLETON_KEY }).lean();
+  const doc = await homeContentRepository.get(HOME_CONTENT_KEY);
   if (!doc) {
     return {
       heroSlides: ['', '', '', '', ''],
@@ -35,8 +34,7 @@ async function getHomeContent() {
       storySection: { ...EMPTY_STORY },
     };
   }
-  const { _id, key, __v, ...rest } = doc;
-  return { id: String(_id), ...rest, storySection: { ...EMPTY_STORY, ...(rest.storySection || {}) } };
+  return { ...doc, storySection: { ...EMPTY_STORY, ...(doc.storySection || {}) } };
 }
 
 /** Upserts the homepage in one write, mirroring the old Firebase `set()`. */
@@ -52,22 +50,14 @@ async function saveHomeContent(payload, actorId) {
     updatedBy: actorId,
   };
 
-  // Snapshot first: the homepage is one document, so every image swap on it is
-  // a replace, and the outgoing files need reclaiming.
-  const before = await HomeContent.findOne({ key: SINGLETON_KEY }).lean();
-
-  const doc = await HomeContent.findOneAndUpdate({ key: SINGLETON_KEY }, { $set: update }, {
-    new: true,
-    upsert: true,
-    runValidators: true,
-    setDefaultsOnInsert: true,
-  });
+  const before = await homeContentRepository.get(HOME_CONTENT_KEY);
+  const result = await homeContentRepository.save(update, actorId, HOME_CONTENT_KEY);
 
   if (before) {
-    await imageCleanup.removeOrphans(before, doc.toObject(), { ignoreHomeContent: true });
+    await imageCleanup.removeOrphans(before, result, { ignoreHomeContent: true });
   }
 
-  return doc.toJSON();
+  return result;
 }
 
 /** Resets every section — backs the "Delete All" button in the admin UI. */
