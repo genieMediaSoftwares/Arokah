@@ -249,7 +249,7 @@ CREATE TABLE IF NOT EXISTS contact_messages (
 CREATE TABLE IF NOT EXISTS file_assets (
   id            CHAR(24)     NOT NULL,
   -- Driver-relative location: a path on disk, or an object key in a bucket.
-  storage_key   VARCHAR(255) NOT NULL,
+  storage_key   VARCHAR(2000) NOT NULL,
   driver        ENUM('local','s3') NOT NULL DEFAULT 'local',
   original_name VARCHAR(200) NOT NULL,
   mime_type     VARCHAR(100) NOT NULL,
