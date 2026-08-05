@@ -119,8 +119,17 @@ if ($detected === null) {
 $folder = upload_resolve_folder($_POST['folder'] ?? null);
 $prefix = UPLOAD_FOLDERS[$folder];
 
+upload_log(sprintf(
+    'accepted %s (%d bytes, %dx%d) for folder "%s"',
+    $detected['mime'],
+    $size,
+    $detected['width'],
+    $detected['height'],
+    $folder
+));
+
+// Logs precisely which step failed — see upload_ensure_folder().
 if (!upload_ensure_folder($folder)) {
-    error_log('[upload.php] Could not create ' . UPLOAD_ROOT . '/' . $folder);
     upload_fail(500, 'The server could not store that image. Please try again.', 'STORAGE_ERROR');
 }
 
@@ -140,12 +149,18 @@ if (file_exists($target)) {
 }
 
 if (!move_uploaded_file($tmpPath, $target)) {
-    error_log('[upload.php] move_uploaded_file failed for ' . $target);
+    // The only remaining causes at this point are disk-level: the account is
+    // out of quota, or uploads/<folder>/ is not writable. Both are invisible
+    // from the response, so both go to the log with the path attached.
+    $reason = error_get_last()['message'] ?? 'no PHP error recorded';
+    upload_log('FATAL move_uploaded_file failed -> ' . $target . ' :: ' . $reason);
     upload_fail(500, 'The server could not store that image. Please try again.', 'STORAGE_ERROR');
 }
 
 // Readable by the web server, writable only by the owner.
 @chmod($target, 0644);
+
+upload_log('stored ' . $key);
 
 upload_send(201, [
     'success'  => true,

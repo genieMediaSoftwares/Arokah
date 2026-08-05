@@ -173,10 +173,11 @@ RewriteRule ^ index.html [L]
 Blocks 3 and 4 add a CORS fallback for responses PHP never produced, and deny
 web access to the config file.
 
-### 4. Check PHP is 8.0 or newer
+### 4. Check PHP is 8.1 or newer
 
 hPanel → **Advanced → PHP Configuration**. Older versions return a clear
-`PHP_TOO_OLD` message rather than a blank 500.
+`PHP_TOO_OLD` message rather than a blank 500. 8.0 went out of security support
+in November 2023, which is a poor thing to point an upload endpoint at.
 
 While you are there, note `upload_max_filesize` and `post_max_size`. If either
 is below 5 MB it wins, and `upload.php` will report *that* number in its error
@@ -377,19 +378,44 @@ Every request writes one line to the PHP error log (hPanel → **Files → error
 with the method, origin, whether `Authorization` arrived, and the outcome. Set
 `UPLOAD_LOG_REQUESTS` to `false` if it gets noisy.
 
-### "Blocked by CORS policy" — which one is it?
+### "Blocked by CORS policy" — read the two variants apart
 
-That message is the symptom of at least five unrelated problems, and the browser
-deliberately hides which. `cors-check.php` answers it in one request; this is the
-same decision tree by hand.
+The browser prints two different messages and they have **opposite** causes.
+Getting this backwards costs hours, so check which one you have first.
+
+> **…It does not have HTTP ok status.**
+
+The preflight came back **non-2xx**. PHP almost certainly never ran — the PHP
+answers OPTIONS with 204 and full CORS headers even when `_upload_config.php` is
+missing entirely, which is covered by an automated test run against a real
+interpreter. Do not touch the PHP. Get the status code:
+
+```bash
+curl -i -X OPTIONS https://maroon-pig-939052.hostingersite.com/upload.php \
+  -H "Origin: http://localhost:5173" -H "Access-Control-Request-Method: POST"
+```
+
+| Status | Cause | Fix |
+|---|---|---|
+| `404` | `upload.php` is not at that path — never uploaded, or in a subfolder | Check the hPanel File Manager |
+| `405` | OPTIONS reached something that is not PHP, almost always `index.html` via the rewrite | Block 2 of `htaccess-root-sample.txt`; if already applied, try Block 4 |
+| `403` | Blocked before PHP: mod_security, or permissions | PHP files `644`, directories `755` |
+| `500` | The server failed before PHP started; a bad `.htaccess` is the usual cause | Rename it to `.htaccess.off` — if the 500 becomes a 404, bisect the file block by block |
+| `200` + HTML | The rewrite swallowed it | Block 2 |
+| `204` | Working — your browser is sending a different origin than curl did. Check the exact string in DevTools |  |
+
+> **No 'Access-Control-Allow-Origin' header is present.**
+
+The preflight came back **2xx but without the header**. Now it *is* about CORS,
+or about something answering in PHP's place with a 200.
 
 | What you see | What it actually is |
 |---|---|
-| Response body is HTML, not JSON | **The SPA rewrite swallowed the request.** PHP never ran. Block 2 of `htaccess-root-sample.txt`. This is the most common cause. |
-| `500 NOT_CONFIGURED` | `_upload_config.php` was never created on the server, or `UPLOAD_JWT_SECRET` is still the placeholder. |
-| `500 PHP_TOO_OLD` | Switch to PHP 8.x in hPanel. |
-| Response is completely blank, no headers | A PHP **parse** error — the only failure the library cannot catch, because the file never executes. Run `php -l upload.php` over SSH, and check the error log. Block 3 of the `.htaccess` at least makes it readable. |
-| `204` with no `Access-Control-Allow-Origin` | Your origin is not on the list. `cors-check.php` echoes back exactly what the server received — usually a port or `www.` mismatch. |
+| Body is HTML, not JSON | The SPA rewrite returned `index.html` with a 200. Block 2. |
+| `204`, no `Access-Control-Allow-Origin` | Your origin is not on the list. `cors-check.php` echoes back exactly what the server received — usually a port or `www.` mismatch. |
+| `500 NOT_CONFIGURED` | `_upload_config.php` was never created, or `UPLOAD_JWT_SECRET` is still the placeholder. (This one *does* carry CORS — you will see the message.) |
+| `500 PHP_TOO_OLD` | Switch to PHP 8.1+ in hPanel. |
+| Blank, no headers at all | A PHP **parse** error — the one failure the library cannot catch, because the file never executes. `php -l upload.php` over SSH; Block 3 of the `.htaccess` at least makes it legible. |
 | Preflight passes, POST returns `401` | Not a CORS problem at all. See the next table. |
 
 ### Other symptoms

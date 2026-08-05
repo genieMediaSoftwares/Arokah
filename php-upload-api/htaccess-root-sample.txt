@@ -2,63 +2,79 @@
 # Sample public_html/.htaccess
 #
 # Rename to ".htaccess" in public_html. If you already have one for the React
-# build, do not replace it wholesale — merge the four blocks below into it.
+# build, merge these blocks in rather than replacing yours.
 #
-# Every block here exists because of a failure that presents as a CORS error in
-# the browser while having nothing to do with CORS. Read the comments before
-# deleting any of them.
+# ── Why this file matters more than the PHP ─────────────────────────────────
+#
+# The PHP answers every OPTIONS preflight with 204 and full CORS headers, and it
+# does so even when _upload_config.php is missing entirely — that is verified by
+# an automated test suite run against a real PHP interpreter. So if the browser
+# reports
+#
+#     Response to preflight request doesn't pass access control check:
+#     It does not have HTTP ok status.
+#
+# then the preflight came back NON-2xx, which means PHP never ran. Something in
+# this file, or in the absence of this file, answered instead. The status code
+# tells you which — see the ladder at the bottom.
+#
+# Each block below is independent. If something here breaks the site, comment
+# out blocks one at a time from the bottom up to find the culprit.
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1. Restore the Authorization header
+# BLOCK 1 — Preserve the Authorization header
 #
-# On CGI and FastCGI — which is how Hostinger runs PHP — Apache does not pass
-# Authorization through to the script, because a CGI process could otherwise
-# read credentials meant for the server itself. PHP then sees no bearer token
-# and every upload returns 401 "Sign in again", no matter how valid the token is.
+# Hostinger runs PHP over FastCGI, which does not forward Authorization to the
+# script: a CGI process could otherwise read credentials meant for the server.
+# PHP then sees no bearer token and every upload returns 401, however valid the
+# token is.
 #
-# Note the RewriteCond. %1 is a backreference to the LAST RewriteCond that ran;
-# with no preceding condition it expands to an empty string and the rule silently
-# does nothing. The condition is not optional decoration — it is where the value
-# comes from.
+# Two mechanisms, because which one works depends on the handler. Both are
+# harmless when redundant — _upload_lib.php reads every spelling.
 # ─────────────────────────────────────────────────────────────────────────────
 <IfModule mod_rewrite.c>
     RewriteEngine On
-    RewriteCond %{HTTP:Authorization} ^(.+)$
-    RewriteRule .* - [E=HTTP_AUTHORIZATION:%1]
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 </IfModule>
 
-# Same goal, different mechanism, for servers where the rewrite above is not
-# enough. Harmless when it is redundant — _upload_lib.php reads every spelling.
 <IfModule mod_setenvif.c>
     SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1
 </IfModule>
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2. The SPA rewrite — THE most common cause of "preflight failed"
+# BLOCK 2 — Keep the API out of the React rewrite
 #
-# React Router needs unknown URLs sent to index.html. Written without the two
-# conditions below, that rule also captures /upload.php: the browser's OPTIONS
-# preflight is answered with your homepage's HTML, which carries no CORS headers,
-# and the console reports
+# THIS IS THE BLOCK THAT FIXES "does not have HTTP ok status".
 #
-#     Response to preflight request doesn't pass access control check
+# React Router needs unknown URLs sent to index.html. Written without the
+# exclusions below, that rule also captures /upload.php. The OPTIONS preflight
+# is then served by index.html — a STATIC file — and Apache/LiteSpeed answer
+# OPTIONS on a static file with 405 Method Not Allowed (or a 200 with no CORS
+# headers). Either way the preflight fails, for a PHP file that was never run.
 #
-# even though upload.php is perfectly fine and was never executed.
+# The first RewriteRule is the important one: it stops the four API endpoints
+# being rewritten no matter what follows. `-` means "do not rewrite" and [L]
+# means "stop processing rules here".
 #
-# `!-f` and `!-d` mean "only rewrite when no real file or directory matches",
-# which is what keeps upload.php, delete.php, list.php and /uploads/* reachable.
+# The `!-f` / `!-d` conditions are the general form of the same guard — only
+# rewrite when no real file or directory matches — and they are what keeps
+# /uploads/* reachable too.
 # ─────────────────────────────────────────────────────────────────────────────
 <IfModule mod_rewrite.c>
     RewriteEngine On
     RewriteBase /
 
-    # Belt and braces: never rewrite the upload API, even if the conditions
-    # below are later edited or reordered by mistake.
-    RewriteRule ^(upload|delete|list)\.php$ - [L]
+    # Never rewrite the upload API, whatever the rules below say.
+    RewriteRule ^(upload|delete|list|cors-check)\.php$ - [L]
 
+    # Never rewrite stored images.
+    RewriteRule ^uploads/ - [L]
+
+    # Everything else: only rewrite when nothing real matches.
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteRule ^ index.html [L]
@@ -66,23 +82,23 @@
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. CORS fallback for responses PHP never produced
+# BLOCK 3 — CORS for responses PHP never produced
 #
-# _upload_lib.php applies CORS to every response it controls, including errors —
-# that is the primary implementation and this does not replace it. This block
-# covers only the cases where PHP never ran at all and therefore could not:
-# a parse error in the PHP itself, a 404 for a file that was not uploaded, a
-# 500 from the server before the interpreter started.
+# _upload_lib.php is the CORS implementation and this does not duplicate it: PHP
+# sets these same headers on every response it controls, and `set` REPLACES
+# rather than appends, so a response that went through PHP ends up with exactly
+# one of each.
 #
-# Without it those failures reach the browser as a bare CORS error with the real
-# cause invisible. With it, the browser can read the response and DevTools shows
-# the actual status.
+# This block exists only for responses PHP could not touch — a 404 for a file
+# that was never uploaded, a 403 from the server, a 500 raised before the
+# interpreter started. Without it those arrive as a bare CORS error with the real
+# status invisible; with it, DevTools shows you the actual 404 or 403 and you can
+# stop chasing CORS.
 #
-# `set` (not `add`) so this can only ever REPLACE the identical value PHP already
-# sent — two Access-Control-Allow-Origin headers on one response is itself a CORS
-# failure. `merge` on Vary for the same reason.
+# Never use `Header add` here. Two Access-Control-Allow-Origin values on one
+# response is itself a CORS failure.
 #
-# Keep this regex in step with UPLOAD_DEFAULT_ORIGINS in _upload_lib.php.
+# Keep this list in step with UPLOAD_DEFAULT_ORIGINS in _upload_lib.php.
 # ─────────────────────────────────────────────────────────────────────────────
 <IfModule mod_setenvif.c>
     SetEnvIf Origin "^https?://(localhost:5173|localhost:3000|(www\.)?arokah\.kkdigitalgrowth\.com|maroon-pig-939052\.hostingersite\.com)$" CORS_ORIGIN=$0
@@ -92,24 +108,39 @@
     Header always set Access-Control-Allow-Origin %{CORS_ORIGIN}e env=CORS_ORIGIN
     Header always set Access-Control-Allow-Credentials "true" env=CORS_ORIGIN
     Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS" env=CORS_ORIGIN
-    Header always set Access-Control-Allow-Headers "Authorization, Content-Type, Accept, X-Requested-With" env=CORS_ORIGIN
+    Header always set Access-Control-Allow-Headers "Authorization, Content-Type, Accept, Origin, X-Requested-With" env=CORS_ORIGIN
     Header always set Access-Control-Max-Age "86400" env=CORS_ORIGIN
     Header always merge Vary Origin
 </IfModule>
 
-# Note this does NOT rescue the case in block 2. If the rewrite swallows
-# upload.php, the preflight passes but the POST then receives index.html instead
-# of JSON, and axios fails parsing it. Block 2 is the fix; this only makes the
-# failure legible.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BLOCK 4 — LAST RESORT, normally commented out
+#
+# Uncomment ONLY if you have proved that LiteSpeed refuses to hand OPTIONS to
+# PHP at all — that is, `curl -i -X OPTIONS .../cors-check.php` returns 403 or
+# 405 while `curl -i .../cors-check.php` returns 200 JSON. That combination is
+# the one thing BLOCK 2 cannot fix, because the request never reaches the
+# rewrite either.
+#
+# It answers the preflight at the server level, before PHP. Block 3 supplies the
+# headers. Leave it commented while PHP is reachable: a preflight answered here
+# is one PHP never sees, so the allowlist in Block 3 becomes the only thing
+# enforcing it.
+# ─────────────────────────────────────────────────────────────────────────────
+#<IfModule mod_rewrite.c>
+#    RewriteEngine On
+#    RewriteCond %{REQUEST_METHOD} =OPTIONS
+#    RewriteRule ^(upload|delete|list|cors-check)\.php$ - [R=204,L]
+#</IfModule>
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4. Protect the config, and cache the build
+# BLOCK 5 — Protect the config, cache the build
 #
-# The config file holds the secret shared with the Express API. PHP is executed
-# rather than served, so its contents are never exposed — but if PHP is ever
-# disabled or misconfigured, this is the difference between a broken page and a
-# leaked secret.
+# The config holds the secret shared with the Express API. PHP is executed
+# rather than served, so it is never exposed — but if PHP is ever disabled or
+# misconfigured, this is the difference between a broken page and a leaked key.
 # ─────────────────────────────────────────────────────────────────────────────
 <FilesMatch "^_upload_(config|config\.example|lib)\.php$">
     <IfModule mod_authz_core.c>
@@ -121,13 +152,12 @@
     </IfModule>
 </FilesMatch>
 
-# Do not compress images; they are already compressed and gzip only adds CPU.
 <IfModule mod_deflate.c>
     AddOutputFilterByType DEFLATE text/html text/css application/javascript application/json
 </IfModule>
 
 <IfModule mod_headers.c>
-    # The hashed asset filenames Vite emits are safe to cache forever.
+    # Vite emits hashed asset filenames, so these are safe to cache forever.
     <FilesMatch "\.(?i:js|css|woff2)$">
         Header set Cache-Control "public, max-age=31536000, immutable"
     </FilesMatch>
@@ -136,3 +166,32 @@
         Header set Cache-Control "no-cache, must-revalidate"
     </FilesMatch>
 </IfModule>
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Reading the preflight status
+#
+#   curl -i -X OPTIONS https://YOUR-DOMAIN/upload.php \
+#     -H "Origin: http://localhost:5173" -H "Access-Control-Request-Method: POST"
+#
+#   204  Working. If the browser still complains, it is a different origin than
+#        the one you passed to curl — check the exact string in DevTools.
+#
+#   404  upload.php is not at that path. The files were never uploaded, or went
+#        into a subfolder. Confirm with the hPanel File Manager.
+#
+#   405  OPTIONS reached something that is not PHP — almost always index.html
+#        via the rewrite. BLOCK 2. If BLOCK 2 is already present and it is still
+#        405, try BLOCK 4.
+#
+#   403  Blocked before PHP: mod_security, or directory permissions. PHP files
+#        should be 644 and directories 755.
+#
+#   500  The server failed before PHP started, and a bad .htaccess is the usual
+#        cause — an `Options` directive that AllowOverride forbids will do it.
+#        Rename this file to .htaccess.off; if the 500 becomes a 404, this file
+#        is the problem, and you can bisect it block by block.
+#
+#   200 + HTML body
+#        The rewrite swallowed it. BLOCK 2.
+# ─────────────────────────────────────────────────────────────────────────────

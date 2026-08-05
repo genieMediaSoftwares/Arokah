@@ -1,8 +1,6 @@
 'use strict';
 
-const multer = require('multer');
 const env = require('../config/env');
-const uploadConfig = require('../config/upload');
 const logger = require('../config/logger');
 const ApiError = require('../utils/ApiError');
 
@@ -35,13 +33,10 @@ function normalizeError(err) {
     return ApiError.conflict(`A record with this ${field} already exists`);
   }
 
-  if (err instanceof multer.MulterError) {
-    const message =
-      err.code === 'LIMIT_FILE_SIZE'
-        ? `File is too large. Maximum size is ${uploadConfig.maxSizeMb}MB.`
-        : `Upload failed: ${err.message}`;
-    return ApiError.badRequest(message, { code: err.code });
-  }
+  // A MulterError branch used to live here. It is gone with the rest of the
+  // upload path: this API never receives a file any more. Images go straight
+  // from the admin panel to upload.php on Hostinger, and only the resulting URL
+  // is sent here — see php-upload-api/README.md.
 
   // Malformed JSON body.
   if (err.type === 'entity.parse.failed') {

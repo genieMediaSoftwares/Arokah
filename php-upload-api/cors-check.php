@@ -38,6 +38,30 @@ $originOk = $normalized !== '' && in_array($normalized, $allowed, true);
 
 $token = upload_bearer_token();
 
+// Every HTTP header that actually reached PHP. Authorization is redacted to its
+// length: the point is whether it survived the trip, and printing a live admin
+// token into a page anyone can open would be a far worse problem than the one
+// being debugged.
+$received = [];
+foreach ($_SERVER as $name => $value) {
+    if (strncmp($name, 'HTTP_', 5) !== 0) {
+        continue;
+    }
+    $header = str_replace(' ', '-', ucwords(strtolower(str_replace('_', ' ', substr($name, 5)))));
+    $received[$header] = (stripos($header, 'authorization') !== false)
+        ? '(present, ' . strlen((string) $value) . ' chars, redacted)'
+        : $value;
+}
+ksort($received);
+
+// Was this request rewritten before it got here? REDIRECT_URL is set by Apache
+// when mod_rewrite has been through it, and a REQUEST_URI that does not match
+// SCRIPT_NAME means something remapped the path.
+$requestUri = (string) ($_SERVER['REQUEST_URI'] ?? '');
+$scriptName = (string) ($_SERVER['SCRIPT_NAME'] ?? '');
+$wasRewritten = isset($_SERVER['REDIRECT_URL'])
+    || ($requestUri !== '' && $scriptName !== '' && strpos($requestUri, $scriptName) !== 0);
+
 // Each entry is a real failure mode, phrased as what to do about it.
 $problems = [];
 
@@ -47,8 +71,18 @@ if (!$configExists) {
     $problems[] = 'SECRET NOT SET — put the value of JWT_SECRET from backend/.env into UPLOAD_JWT_SECRET.';
 }
 
-if (PHP_VERSION_ID < 80000) {
-    $problems[] = 'PHP TOO OLD — this is ' . PHP_VERSION . '; switch to 8.x in hPanel > Advanced > PHP Configuration.';
+if (PHP_VERSION_ID < 80100) {
+    $problems[] = 'PHP TOO OLD — this is ' . PHP_VERSION . '; switch to 8.1+ in hPanel > Advanced > PHP Configuration.';
+}
+
+if ($wasRewritten) {
+    $problems[] = 'REWRITTEN — a rewrite rule remapped this request. It will do the same to '
+        . 'upload.php, which is what makes the OPTIONS preflight fail. Apply block 2 of '
+        . 'htaccess-root-sample.txt.';
+}
+
+if (!ini_get('file_uploads')) {
+    $problems[] = 'FILE UPLOADS DISABLED — set file_uploads = On in hPanel > Advanced > PHP Configuration.';
 }
 
 if ($origin === '') {
@@ -84,6 +118,19 @@ upload_send(200, [
     // htaccess-root-sample.txt.
     'phpExecuted' => true,
 
+    'request' => [
+        'method'          => $_SERVER['REQUEST_METHOD'] ?? null,
+        'requestUri'      => $requestUri !== '' ? $requestUri : null,
+        'scriptName'      => $scriptName !== '' ? $scriptName : null,
+        // true here on a direct hit to /cors-check.php means a rewrite rule is
+        // rerouting the API — block 2 of htaccess-root-sample.txt.
+        'appearsRewritten' => $wasRewritten,
+        'serverSoftware'  => $_SERVER['SERVER_SOFTWARE'] ?? null,
+        'protocol'        => $_SERVER['SERVER_PROTOCOL'] ?? null,
+        'https'           => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
+        'headersReceived' => $received,
+    ],
+
     'cors' => [
         'originReceived'   => $origin !== '' ? $origin : null,
         'originNormalized' => $normalized !== '' ? $normalized : null,
@@ -100,13 +147,20 @@ upload_send(200, [
     ],
 
     'deployment' => [
-        'phpVersion'      => PHP_VERSION,
-        'configPresent'   => $configExists,
+        'phpVersion'       => PHP_VERSION,
+        'phpVersionOk'     => PHP_VERSION_ID >= 80100,
+        'configPresent'    => $configExists,
         'secretConfigured' => $secretSet,
-        'uploadsWritable' => is_dir(UPLOAD_ROOT) && is_writable(UPLOAD_ROOT),
-        'maxUploadSize'   => upload_max_label(),
-        'finfoAvailable'  => function_exists('finfo_open'),
-        'gdOrImagesize'   => function_exists('getimagesize'),
+        'uploadsExists'    => is_dir(UPLOAD_ROOT),
+        'uploadsWritable'  => is_dir(UPLOAD_ROOT) && is_writable(UPLOAD_ROOT),
+        'uploadsPerms'     => is_dir(UPLOAD_ROOT) ? substr(sprintf('%o', fileperms(UPLOAD_ROOT)), -4) : null,
+        'uploadsHtaccess'  => is_file(UPLOAD_ROOT . '/.htaccess'),
+        'maxUploadSize'    => upload_max_label(),
+        'uploadMaxFilesize' => ini_get('upload_max_filesize'),
+        'postMaxSize'      => ini_get('post_max_size'),
+        'fileUploadsOn'    => (bool) ini_get('file_uploads'),
+        'finfoAvailable'   => function_exists('finfo_open'),
+        'gdOrImagesize'    => function_exists('getimagesize'),
     ],
 
     'problems' => $problems,

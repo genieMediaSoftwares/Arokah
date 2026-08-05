@@ -53,10 +53,16 @@ const UPLOAD_DEFAULT_ORIGINS = [
  * `Authorization` is the one that matters — it is not on the CORS safelist, so
  * its presence is what makes the browser send a preflight at all. `Content-Type`
  * covers the JSON body delete.php accepts. `Accept` and `X-Requested-With` are
- * listed because some axios setups and interceptors add them, and an
- * unlisted header fails the preflight with no useful diagnostic.
+ * listed because some axios setups and interceptors add them, and an unlisted
+ * header fails the preflight with no useful diagnostic.
+ *
+ * `Origin` is listed for completeness only. It is a forbidden header name — set
+ * by the browser, never by JavaScript — so it is never part of a preflight's
+ * Access-Control-Request-Headers and listing it changes nothing. It is here so
+ * this string matches the .htaccess fallback exactly; a reader comparing the two
+ * should not have to work out whether a difference is meaningful.
  */
-const UPLOAD_ALLOWED_HEADERS = 'Authorization, Content-Type, Accept, X-Requested-With';
+const UPLOAD_ALLOWED_HEADERS = 'Authorization, Content-Type, Accept, Origin, X-Requested-With';
 
 /** Advertised on every endpoint, so one preflight answer is valid for all three. */
 const UPLOAD_ALLOWED_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
@@ -307,21 +313,48 @@ if (is_file(__DIR__ . '/_upload_config.php')) {
 }
 
 /**
- * str_starts_with() and str_contains() are PHP 8.0. Hostinger defaults to 8.x,
- * but an account left on 7.4 would otherwise fail with "call to undefined
- * function" — a fatal that produces a blank 500 and no clue what is wrong.
+ * Minimum PHP version.
  *
- * Everything above this line is written to parse and run on 7.x, which is what
- * lets this message reach the browser at all instead of dying as a CORS error.
+ * The code needs 8.0 to run at all (str_starts_with, str_contains). 8.1 is
+ * required rather than merely recommended because 8.0 reached end of security
+ * support in November 2023 — an unpatched interpreter is a poor thing to point
+ * an upload endpoint at.
+ *
+ * Everything ABOVE this line is written to parse and run on 7.x, which is what
+ * lets this message reach the browser as readable JSON instead of dying as a
+ * CORS error. That ordering is load-bearing; do not move this check upward.
  */
-if (PHP_VERSION_ID < 80000) {
+if (PHP_VERSION_ID < 80100) {
     upload_fail(
         500,
-        'The upload API needs PHP 8.0 or newer (this server runs ' . PHP_VERSION
+        'The upload API needs PHP 8.1 or newer (this server runs ' . PHP_VERSION
             . '). Change it in hPanel under Advanced > PHP Configuration.',
         'PHP_TOO_OLD'
     );
 }
+
+/**
+ * Uncaught exceptions become readable JSON rather than a blank 500.
+ *
+ * The shutdown handler above catches fatals; this catches throwables, which are
+ * a different path. Between them, no failure mode leaves the browser with an
+ * empty response it is not allowed to read.
+ */
+set_exception_handler(static function (Throwable $e): void {
+    error_log(sprintf(
+        '[upload-api] UNCAUGHT %s: %s in %s:%d',
+        get_class($e),
+        $e->getMessage(),
+        $e->getFile(),
+        $e->getLine()
+    ));
+
+    upload_fail(
+        500,
+        'The upload API hit an unexpected error. Check the PHP error log for details.',
+        'INTERNAL_ERROR'
+    );
+});
 
 if (defined('UPLOAD_DEBUG') && UPLOAD_DEBUG) {
     ini_set('display_errors', '1');
@@ -726,17 +759,52 @@ function upload_build_filename(string $prefix, string $ext): string
     return substr($safePrefix, 0, 24) . '_' . $stamp . '_' . $random . '.' . $ext;
 }
 
-/** Creates uploads/<folder>/ if it is not there yet. */
+/**
+ * Creates uploads/ and uploads/<folder>/ if they are not there yet.
+ *
+ * 0755 — owner writes, everyone reads. The web server has to be able to read
+ * these files to serve them, and nothing but the owner should be able to write
+ * them. 0777 would work too and is the usual cargo-cult answer to a failed
+ * upload; it also lets any other account on a shared host write into your image
+ * directory, so it is not used here.
+ *
+ * The two levels are created separately so the log can say which one failed —
+ * "cannot create uploads/" and "cannot create uploads/events/" have different
+ * causes (account-level permissions vs. a stale parent) and different fixes.
+ */
 function upload_ensure_folder(string $folder): bool
 {
+    if (!is_dir(UPLOAD_ROOT)) {
+        // Suppressed because a concurrent request may have won the race;
+        // is_dir() afterwards is the real answer either way.
+        @mkdir(UPLOAD_ROOT, 0755, true);
+
+        if (!is_dir(UPLOAD_ROOT)) {
+            upload_log('FATAL could not create the uploads root at ' . UPLOAD_ROOT);
+            return false;
+        }
+        upload_log('created the uploads root at ' . UPLOAD_ROOT);
+    }
+
+    if (!is_writable(UPLOAD_ROOT)) {
+        upload_log('FATAL uploads root is not writable: ' . UPLOAD_ROOT . ' (chmod it to 755)');
+        return false;
+    }
+
     $dir = UPLOAD_ROOT . DIRECTORY_SEPARATOR . $folder;
     if (is_dir($dir)) {
         return true;
     }
-    // Suppressed because a concurrent request may have won the race; is_dir()
-    // below is the real answer either way.
+
     @mkdir($dir, 0755, true);
-    return is_dir($dir);
+
+    if (!is_dir($dir)) {
+        upload_log('FATAL could not create folder ' . $folder);
+        return false;
+    }
+
+    upload_log('created folder ' . $folder);
+    return true;
 }
 
 /**
