@@ -88,24 +88,38 @@ const UPLOAD_FOLDERS = [
 define('UPLOAD_DEFAULT_FOLDER', 'general');
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 5. Browser origins allowed to call this API
+// 5. EXTRA browser origins allowed to call this API
+//
+// These are ADDED to the built-in list in _upload_lib.php (UPLOAD_DEFAULT_ORIGINS),
+// which already covers localhost:5173, localhost:3000, both arokah.kkdigitalgrowth.com
+// spellings and the hostingersite.com domain. You only need this array for an
+// origin those five do not cover — a staging domain, a preview deploy.
+//
+// Leaving it empty is normal and correct.
+//
+// The built-in list exists so a typo here cannot make the API both unreachable
+// AND unreadable at once: a broken CORS config would otherwise hide its own
+// error message behind a CORS error. Entries are normalised before comparison,
+// so a stray trailing slash or capital letter still matches.
 //
 // When the React build is served from this same domain the calls are
-// same-origin and CORS never comes into it. This list is what makes the local
-// Vite dev server and any separately-hosted frontend work.
+// same-origin and CORS never comes into it at all.
 // ─────────────────────────────────────────────────────────────────────────────
 const UPLOAD_ALLOWED_ORIGINS = [
-    'https://maroon-pig-939052.hostingersite.com',
-    'https://www.arokah.kkdigitalgrowth.com',
-    'https://arokah.kkdigitalgrowth.com',
-    'http://localhost:5173',
-    'http://localhost:3000',
+    // 'https://staging.example.com',
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 6. Diagnostics
-//
-// Leave false in production. PHP notices printed into the response body would
-// corrupt the JSON and turn a working upload into an unparseable one.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// One line per request in the PHP error log: method, origin, whether an
+// Authorization header actually arrived, and the outcome. Cheap, and it is what
+// tells a stripped auth header apart from an expired token. Set to false if the
+// log gets noisy.
+define('UPLOAD_LOG_REQUESTS', true);
+
+// Leave false in production. PHP notices printed into the response body would
+// corrupt the JSON and turn a working upload into an unparseable one. When true,
+// fatal errors also return their real message in the JSON `detail` field.
 define('UPLOAD_DEBUG', false);

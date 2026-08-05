@@ -2,66 +2,206 @@
 /**
  * Shared helpers for upload.php, delete.php and list.php.
  *
- * Nothing in here emits output on its own except through upload_send(), which
- * always terminates the request. That keeps every possible exit from these
- * endpoints a well-formed JSON document.
+ * ── Ordering matters here, and it is the whole point of this file's layout ───
+ *
+ * CORS headers are applied at INCLUDE TIME, at the top of this file, before any
+ * other line of this API can run or fail. Every endpoint gets them by doing
+ * nothing more than `require_once` — there is no upload_cors() call to forget
+ * and no second copy of the logic anywhere.
+ *
+ * That ordering is not stylistic. The previous version called upload_cors()
+ * from inside each endpoint, AFTER this file had been required — which left a
+ * window where a missing config file or an unsupported PHP version exited with
+ * a JSON body carrying no CORS headers at all. The browser cannot read a
+ * response like that, so a perfectly clear "you forgot to create the config"
+ * message reached the developer as the opposite of useful:
+ *
+ *     No 'Access-Control-Allow-Origin' header is present on the requested resource
+ *
+ * The rule that follows from that, and that the rest of this file obeys: no
+ * request may reach any exit, for any reason, without CORS headers already on
+ * it. Errors especially — an error the browser is allowed to read is a bug
+ * report; an error it is not is a mystery.
  */
 
 declare(strict_types=1);
 
-/**
- * The config is deliberately NOT committed — see _upload_config.example.php.
- * Forgetting to create it would otherwise be a bare "failed to open stream"
- * fatal with an empty 500 body, which tells the person deploying nothing.
- */
-if (!file_exists(__DIR__ . '/_upload_config.php')) {
-    http_response_code(500);
-    header('Content-Type: application/json; charset=utf-8');
-    echo json_encode([
-        'success' => false,
-        'message' => 'The upload API is not configured: copy _upload_config.example.php '
-            . 'to _upload_config.php and fill in the values.',
-        'code'    => 'NOT_CONFIGURED',
-    ]);
-    exit;
-}
-
-require_once __DIR__ . '/_upload_config.php';
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. CORS — first, unconditional, config-independent
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * str_starts_with() and str_contains() are PHP 8.0. Hostinger defaults to 8.x,
- * but an account left on 7.4 would otherwise fail with "call to undefined
- * function" — a fatal that produces a blank 500 and no clue what is wrong.
- * Saying so plainly costs three lines.
+ * Origins accepted even when _upload_config.php is missing or unreadable.
+ *
+ * This list is in code rather than only in config for exactly the reason the
+ * Express API keeps BASE_ORIGINS in backend/src/config/cors.js: a mistyped
+ * config value must not be able to make the API unreachable and unreadable at
+ * the same time. Config can still ADD origins (see upload_allowed_origins);
+ * these five are simply always present.
  */
-if (PHP_VERSION_ID < 80000) {
-    http_response_code(500);
-    header('Content-Type: application/json; charset=utf-8');
-    echo json_encode([
-        'success' => false,
-        'message' => 'The upload API needs PHP 8.0 or newer (this server runs ' . PHP_VERSION
-            . '). Change it in hPanel under Advanced > PHP Configuration.',
-        'code'    => 'PHP_TOO_OLD',
-    ]);
-    exit;
+const UPLOAD_DEFAULT_ORIGINS = [
+    'http://localhost:5173',
+    'http://localhost:3000',
+    'https://arokah.kkdigitalgrowth.com',
+    'https://www.arokah.kkdigitalgrowth.com',
+    'https://maroon-pig-939052.hostingersite.com',
+];
+
+/**
+ * Request headers the browser may send on a cross-origin request.
+ *
+ * `Authorization` is the one that matters — it is not on the CORS safelist, so
+ * its presence is what makes the browser send a preflight at all. `Content-Type`
+ * covers the JSON body delete.php accepts. `Accept` and `X-Requested-With` are
+ * listed because some axios setups and interceptors add them, and an
+ * unlisted header fails the preflight with no useful diagnostic.
+ */
+const UPLOAD_ALLOWED_HEADERS = 'Authorization, Content-Type, Accept, X-Requested-With';
+
+/** Advertised on every endpoint, so one preflight answer is valid for all three. */
+const UPLOAD_ALLOWED_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
+
+/**
+ * Reduces an origin to the bare scheme://host:port a browser actually sends.
+ *
+ * Browsers always send a clean, lowercased origin with no trailing slash, so
+ * this is really about the OTHER side of the comparison: a config entry written
+ * as "https://example.com/" would never match, and the failure is completely
+ * silent. The Express config carries a comment noting that this exact mistake
+ * took the live site down once; the same trap is worth disarming here.
+ */
+function upload_normalize_origin(string $value): string
+{
+    $value = trim($value);
+    if ($value === '') {
+        return '';
+    }
+
+    $parts = parse_url($value);
+    if (is_array($parts) && isset($parts['scheme'], $parts['host'])) {
+        $origin = strtolower($parts['scheme']) . '://' . strtolower($parts['host']);
+        if (isset($parts['port'])) {
+            $origin .= ':' . $parts['port'];
+        }
+        return $origin;
+    }
+
+    return strtolower(rtrim($value, '/'));
 }
 
-if (UPLOAD_DEBUG) {
-    ini_set('display_errors', '1');
-    error_reporting(E_ALL);
-} else {
-    // A PHP notice printed into the body would corrupt the JSON. Log, don't print.
-    ini_set('display_errors', '0');
-    error_reporting(E_ALL);
+/** The built-in list, plus anything UPLOAD_ALLOWED_ORIGINS adds. */
+function upload_allowed_origins(): array
+{
+    $origins = UPLOAD_DEFAULT_ORIGINS;
+
+    // defined() rather than a bare reference: the config may not have loaded,
+    // and reading an undefined constant is a fatal in PHP 8.
+    if (defined('UPLOAD_ALLOWED_ORIGINS') && is_array(UPLOAD_ALLOWED_ORIGINS)) {
+        $origins = array_merge($origins, UPLOAD_ALLOWED_ORIGINS);
+    }
+
+    return array_values(array_unique(array_map('upload_normalize_origin', $origins)));
+}
+
+/**
+ * Applies CORS to this response, and answers the preflight outright.
+ *
+ * Called once, automatically, at the bottom of this section — never from an
+ * endpoint. It is safe to call again (upload_send does, as a belt-and-braces
+ * re-assert) because header() replaces rather than appends, so a header can
+ * never end up with two values, which browsers reject outright.
+ *
+ * An origin off the allowlist is refused by OMITTING Access-Control-Allow-Origin
+ * rather than by returning an error. That is the actual CORS refusal — the
+ * browser blocks the response itself. Reflecting an arbitrary origin back, or
+ * sending `*`, would let any page on the internet drive this API with a token
+ * stolen from a logged-in admin.
+ */
+function upload_cors_headers(): void
+{
+    if (headers_sent()) {
+        return;
+    }
+
+    $origin = upload_normalize_origin((string) ($_SERVER['HTTP_ORIGIN'] ?? ''));
+
+    if ($origin !== '' && in_array($origin, upload_allowed_origins(), true)) {
+        header('Access-Control-Allow-Origin: ' . $origin);
+        header('Access-Control-Allow-Credentials: true');
+    }
+
+    // Sent whether or not the origin matched. The response genuinely differs by
+    // Origin, so without this a shared cache can hand a cached CORS-less reply
+    // to an allowed origin — an intermittent CORS failure that reproduces on one
+    // machine and not another and looks like nothing at all in the code.
+    header('Vary: Origin');
+
+    header('Access-Control-Allow-Methods: ' . UPLOAD_ALLOWED_METHODS);
+    header('Access-Control-Allow-Headers: ' . UPLOAD_ALLOWED_HEADERS);
+    header('Access-Control-Max-Age: 86400');
+}
+
+/**
+ * Applies the headers, then answers a preflight outright.
+ *
+ * Split from upload_cors_headers() so that re-asserting headers on the way out
+ * of upload_send() can never re-trigger the exit below. Only the single
+ * include-time call is allowed to short-circuit the request.
+ */
+function upload_cors(): void
+{
+    upload_cors_headers();
+
+    if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
+        // A preflight is a question about permissions, not a request for the
+        // resource. It carries no Authorization header and must never be
+        // authenticated — checking auth here is the classic way to make every
+        // cross-origin call fail before it is even attempted.
+        upload_log('preflight answered');
+        http_response_code(204);
+        header('Content-Length: 0');
+        exit;
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Responses
+// 2. Diagnostics
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One line per request to the PHP error log (hPanel > Files > error_log).
+ *
+ * Deliberately records whether Authorization ARRIVED rather than what it
+ * contained: on some SAPIs the header is stripped before PHP sees it, and
+ * "auth=no" against a request the browser definitely sent one on is the single
+ * most useful fact for telling that case apart from an expired token.
+ */
+function upload_log(string $message): void
+{
+    if (defined('UPLOAD_LOG_REQUESTS') && !UPLOAD_LOG_REQUESTS) {
+        return;
+    }
+
+    $script = basename($_SERVER['SCRIPT_NAME'] ?? 'upload-api');
+    $method = $_SERVER['REQUEST_METHOD'] ?? '-';
+    $origin = $_SERVER['HTTP_ORIGIN'] ?? '(none)';
+    $auth = upload_bearer_token() !== '' ? 'yes' : 'no';
+
+    error_log(sprintf('[%s] %s origin=%s auth=%s :: %s', $script, $method, $origin, $auth, $message));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3. Responses
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Emits a JSON body and ends the request. Nothing runs after this. */
 function upload_send(int $status, array $payload): void
 {
+    // Re-asserted rather than assumed. Every exit from this API goes through
+    // here, so this one line is what guarantees the promise at the top of the
+    // file — that no response, including a 500, can ever leave without CORS.
+    upload_cors_headers();
+
     if (!headers_sent()) {
         http_response_code($status);
         header('Content-Type: application/json; charset=utf-8');
@@ -78,6 +218,8 @@ function upload_send(int $status, array $payload): void
  */
 function upload_fail(int $status, string $message, string $code = 'UPLOAD_ERROR'): void
 {
+    upload_log($code . ' ' . $status . ': ' . $message);
+
     upload_send($status, [
         'success' => false,
         'message' => $message,
@@ -85,47 +227,112 @@ function upload_fail(int $status, string $message, string $code = 'UPLOAD_ERROR'
     ]);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CORS
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Answers the preflight and sets the response headers for a real request.
- *
- * An origin off the allowlist is refused by simply omitting
- * Access-Control-Allow-Origin — the browser then blocks the response itself.
- * Reflecting an arbitrary origin back would let any page on the internet drive
- * this API with a stolen token.
- */
-function upload_cors(string $methods): void
-{
-    $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-
-    if ($origin !== '' && in_array($origin, UPLOAD_ALLOWED_ORIGINS, true)) {
-        header('Access-Control-Allow-Origin: ' . $origin);
-        header('Vary: Origin');
-        header('Access-Control-Allow-Credentials: true');
-    }
-
-    header('Access-Control-Allow-Methods: ' . $methods . ', OPTIONS');
-    header('Access-Control-Allow-Headers: Authorization, Content-Type');
-    header('Access-Control-Max-Age: 86400');
-
-    if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
-        http_response_code(204);
-        exit;
-    }
-}
-
-/** Rejects anything but the listed verbs. */
+/** Rejects anything but the listed verbs. OPTIONS never reaches this. */
 function upload_require_method(array $allowed): void
 {
     $method = $_SERVER['REQUEST_METHOD'] ?? '';
     if (!in_array($method, $allowed, true)) {
-        header('Allow: ' . implode(', ', $allowed));
+        header('Allow: ' . implode(', ', $allowed) . ', OPTIONS');
         upload_fail(405, 'Method ' . $method . ' is not allowed here.', 'METHOD_NOT_ALLOWED');
     }
 }
+
+/**
+ * Turns a fatal error into a readable JSON response.
+ *
+ * A fatal normally ends the request with a blank body and no headers of our
+ * choosing, which reaches the browser as a bare CORS failure and tells nobody
+ * anything. This converts it into a 500 the browser is allowed to read, so the
+ * DevTools console shows the actual problem.
+ *
+ * The one thing it cannot catch is a PARSE error in this file itself — the file
+ * never executes, so nothing is registered. That case is covered one layer down,
+ * by the CORS fallback in .htaccess.
+ */
+register_shutdown_function(static function (): void {
+    $error = error_get_last();
+    if ($error === null || !in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+        return;
+    }
+    if (headers_sent()) {
+        return;
+    }
+
+    error_log(sprintf('[upload-api] FATAL %s in %s:%d', $error['message'], $error['file'], $error['line']));
+
+    upload_cors_headers();
+    http_response_code(500);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode([
+        'success' => false,
+        'message' => 'The upload API hit an internal error. Check the PHP error log for details.',
+        'code'    => 'INTERNAL_ERROR',
+        // Only in debug mode: the message can name file paths and internals.
+        'detail'  => (defined('UPLOAD_DEBUG') && UPLOAD_DEBUG) ? $error['message'] : null,
+    ], JSON_UNESCAPED_SLASHES);
+});
+
+// Apply CORS now, before anything below here has a chance to fail. A preflight
+// never gets past this line.
+upload_cors();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. Configuration — loaded only once CORS is guaranteed
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The config is deliberately NOT committed — see _upload_config.example.php.
+ * Forgetting to create it is the single most likely deployment mistake, so it
+ * gets a named error rather than a "failed to open stream" fatal. Reached only
+ * after upload_cors() above, so the browser can actually read this.
+ *
+ * cors-check.php is the one caller that must survive a missing config — its
+ * whole job is to REPORT that state rather than exit on it — so it declares
+ * UPLOAD_DIAGNOSTIC_MODE and gets inert defaults instead of a 500.
+ */
+if (is_file(__DIR__ . '/_upload_config.php')) {
+    require_once __DIR__ . '/_upload_config.php';
+} elseif (defined('UPLOAD_DIAGNOSTIC_MODE')) {
+    define('UPLOAD_ROOT', __DIR__ . '/uploads');
+    define('UPLOAD_MAX_BYTES', 5 * 1024 * 1024);
+    define('UPLOAD_PUBLIC_BASE_URL', '');
+    define('UPLOAD_DEFAULT_FOLDER', 'general');
+} else {
+    upload_fail(
+        500,
+        'The upload API is not configured: copy _upload_config.example.php to '
+            . '_upload_config.php on the server and fill in the values.',
+        'NOT_CONFIGURED'
+    );
+}
+
+/**
+ * str_starts_with() and str_contains() are PHP 8.0. Hostinger defaults to 8.x,
+ * but an account left on 7.4 would otherwise fail with "call to undefined
+ * function" — a fatal that produces a blank 500 and no clue what is wrong.
+ *
+ * Everything above this line is written to parse and run on 7.x, which is what
+ * lets this message reach the browser at all instead of dying as a CORS error.
+ */
+if (PHP_VERSION_ID < 80000) {
+    upload_fail(
+        500,
+        'The upload API needs PHP 8.0 or newer (this server runs ' . PHP_VERSION
+            . '). Change it in hPanel under Advanced > PHP Configuration.',
+        'PHP_TOO_OLD'
+    );
+}
+
+if (defined('UPLOAD_DEBUG') && UPLOAD_DEBUG) {
+    ini_set('display_errors', '1');
+    error_reporting(E_ALL);
+} else {
+    // A PHP notice printed into the body would corrupt the JSON. Log, don't print.
+    ini_set('display_errors', '0');
+    error_reporting(E_ALL);
+}
+
+upload_log('request accepted');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Authentication

@@ -23,9 +23,10 @@
 
 declare(strict_types=1);
 
+// Applies CORS and answers any OPTIONS preflight on its own, before a single
+// line below can run or fail. There is no upload_cors() call to make here.
 require_once __DIR__ . '/_upload_lib.php';
 
-upload_cors('POST');
 upload_require_method(['POST']);
 upload_require_admin();
 

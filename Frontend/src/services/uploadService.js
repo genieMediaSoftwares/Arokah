@@ -57,6 +57,26 @@ function assertConfigured() {
 }
 
 /**
+ * Rewrites the one axios failure that is genuinely ambiguous.
+ *
+ * A blocked CORS response and an unreachable host are indistinguishable to
+ * JavaScript — the browser hands back an error with no status and no body in
+ * both cases, on purpose. Since the upload host is a different origin from the
+ * app, "could not reach the server" is the less likely of the two readings and
+ * sends people looking at their network instead of at `.htaccess`.
+ */
+function describeTransportFailure(error) {
+  if (error?.response || error?.code === "ECONNABORTED") return null;
+  if (error?.name === "CanceledError" || error?.name === "AbortError") return null;
+
+  return new Error(
+    `The image host at ${UPLOAD_BASE_URL} did not accept the request. ` +
+      "This is usually CORS or a misconfigured .htaccess rather than a network fault — " +
+      "open cors-check.php on that domain to see which."
+  );
+}
+
+/**
  * Client-side pre-check. Catches mistakes instantly without a round trip, but
  * it is only a convenience — upload.php re-validates every upload by reading the
  * file's actual bytes, because anything checked here can be bypassed.
@@ -133,7 +153,9 @@ export async function uploadImage(file, folder = "general", { onProgress, signal
     // Access tokens live about fifteen minutes, and an admin editing a long page
     // will cross that boundary mid-session. One silent refresh and one replay
     // turns what would be a baffling "sign in again" into nothing at all.
-    if (error?.response?.status !== 401) throw normalizeError(error);
+    if (error?.response?.status !== 401) {
+      throw describeTransportFailure(error) || normalizeError(error);
+    }
 
     try {
       token = await refreshAccessToken();
@@ -141,7 +163,7 @@ export async function uploadImage(file, folder = "general", { onProgress, signal
       throw new Error("Your session expired. Sign in again to upload images.");
     }
     response = await postFile(file, target, token, { onProgress, signal }).catch((retryError) => {
-      throw normalizeError(retryError);
+      throw describeTransportFailure(retryError) || normalizeError(retryError);
     });
   }
 
@@ -212,6 +234,6 @@ export async function listStoredImages({ folder, page = 1, limit = 100 } = {}) {
       meta: response?.data?.meta ?? null,
     };
   } catch (error) {
-    throw normalizeError(error);
+    throw describeTransportFailure(error) || normalizeError(error);
   }
 }

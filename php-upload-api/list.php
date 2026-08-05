@@ -19,9 +19,9 @@
 
 declare(strict_types=1);
 
+// Applies CORS and answers any OPTIONS preflight on its own — see _upload_lib.php.
 require_once __DIR__ . '/_upload_lib.php';
 
-upload_cors('GET');
 upload_require_method(['GET']);
 upload_require_admin();
 
