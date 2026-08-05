@@ -1,0 +1,59 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# public_html/uploads/.htaccess
+#
+# Everything in this directory arrived from the internet, so it is treated as
+# data and never as code. upload.php already refuses anything that is not a real
+# JPG, PNG or WEBP; this file is the second, independent barrier — if that check
+# is ever weakened or bypassed, a planted script still cannot be executed.
+#
+# Upload this file together with the PHP endpoints. Without it a single upload
+# bug becomes remote code execution on the whole hosting account.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# No directory listings, no CGI.
+Options -Indexes -ExecCGI
+
+# Detach every scripting handler, so a .php file here is served as plain bytes
+# rather than run. RemoveHandler/RemoveType are used instead of `php_flag engine
+# off` because php_flag is a mod_php directive and returns 500 on LiteSpeed,
+# which is what Hostinger actually runs.
+<IfModule mod_mime.c>
+    RemoveHandler .php .phtml .php3 .php4 .php5 .php6 .php7 .php8 .phps .pht
+    RemoveHandler .cgi .pl .py .rb .sh .lua
+    RemoveType .php .phtml .php3 .php4 .php5 .php6 .php7 .php8 .phps .pht
+</IfModule>
+
+# Belt and braces: refuse to serve those extensions at all.
+<FilesMatch "\.(?i:php|phtml|php[0-9]|phps|pht|cgi|pl|py|rb|sh|lua|asp|aspx|jsp|htaccess|htpasswd|ini|log|sql|env)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# Serve only the formats this API stores, and never let a browser second-guess
+# the declared type — MIME sniffing is how a file that "looks like" HTML ends up
+# rendered as HTML on your own domain.
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set Content-Disposition "inline"
+</IfModule>
+
+# Filenames carry a timestamp and a random suffix, so a given URL never changes
+# what it points at. That makes a one-year immutable cache safe, and it is what
+# keeps repeat visits from re-downloading every image on the page.
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType image/jpeg "access plus 1 year"
+    ExpiresByType image/png  "access plus 1 year"
+    ExpiresByType image/webp "access plus 1 year"
+</IfModule>
+
+<IfModule mod_headers.c>
+    <FilesMatch "\.(?i:jpg|jpeg|png|webp)$">
+        Header set Cache-Control "public, max-age=31536000, immutable"
+    </FilesMatch>
+</IfModule>

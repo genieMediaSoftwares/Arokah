@@ -162,11 +162,23 @@ const env = {
   ADMIN_NOTIFY_EMAIL: str('ADMIN_NOTIFY_EMAIL'),
 
   // ── File storage ───────────────────────────────────────────────────────────
+  // 'php'   images live in Hostinger's public_html/uploads and are written by
+  //         upload.php; this API only ever stores and deletes their URLs
+  // 'local' the retired on-disk driver — unusable on Render, whose filesystem is
+  //         wiped on every redeploy, which is why 'php' exists
   STORAGE_DRIVER: str('STORAGE_DRIVER', { fallback: 'local' }),
   UPLOAD_DIR: str('UPLOAD_DIR', { fallback: path.resolve(__dirname, '../../uploads') }),
   MAX_UPLOAD_SIZE_MB: int('MAX_UPLOAD_SIZE_MB', 5, { min: 1, max: 100 }),
   MAX_UPLOAD_FILES: int('MAX_UPLOAD_FILES', 10, { min: 1, max: 50 }),
   UPLOAD_CACHE_MAX_AGE: str('UPLOAD_CACHE_MAX_AGE', { fallback: '365d' }),
+
+  // The domain serving public_html/uploads — the prefix on every stored image
+  // URL. Required when STORAGE_DRIVER=php; enforced below rather than here,
+  // because it is only meaningful for that driver.
+  UPLOAD_PUBLIC_BASE_URL: str('UPLOAD_PUBLIC_BASE_URL'),
+  // Where upload.php / delete.php / list.php are reachable. Defaults to
+  // UPLOAD_PUBLIC_BASE_URL, which is correct unless they have been split off.
+  UPLOAD_PHP_ENDPOINT_URL: str('UPLOAD_PHP_ENDPOINT_URL'),
 
   S3_ENDPOINT: str('S3_ENDPOINT'),
   S3_REGION: str('S3_REGION', { fallback: 'auto' }),
@@ -225,9 +237,48 @@ function productionChecks() {
   return problems;
 }
 
+/**
+ * Storage rules. Checked in every environment, not just production: a missing
+ * upload host does not fail at boot on its own, it fails the first time an admin
+ * saves a page and the orphaned image is silently left behind. Far better to
+ * refuse to start.
+ */
+function storageChecks() {
+  const problems = [];
+  if (env.STORAGE_DRIVER !== 'php') return problems;
+
+  if (!env.UPLOAD_PUBLIC_BASE_URL) {
+    problems.push(
+      'STORAGE_DRIVER=php requires UPLOAD_PUBLIC_BASE_URL (the domain serving ' +
+        'public_html/uploads, e.g. https://example.com)'
+    );
+    return problems;
+  }
+
+  for (const key of ['UPLOAD_PUBLIC_BASE_URL', 'UPLOAD_PHP_ENDPOINT_URL']) {
+    const value = env[key];
+    if (!value) continue;
+    try {
+      const { protocol } = new URL(value);
+      if (protocol !== 'http:' && protocol !== 'https:') throw new Error('bad protocol');
+    } catch {
+      problems.push(`${key} must be an absolute http(s) URL (got "${value}")`);
+    }
+  }
+
+  // These URLs are concatenated with "/uploads/..."; a trailing slash would
+  // produce "//uploads/..." in every stored record.
+  if (env.UPLOAD_PUBLIC_BASE_URL.endsWith('/')) {
+    problems.push('UPLOAD_PUBLIC_BASE_URL must not end with a slash');
+  }
+
+  return problems;
+}
+
 const problems = [
   ...missing.map((key) => `Missing required variable: ${key}`),
   ...invalid,
+  ...storageChecks(),
   ...(isProduction ? productionChecks() : []),
 ];
 

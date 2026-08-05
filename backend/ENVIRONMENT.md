@@ -137,11 +137,23 @@ Unset means outbound email is disabled. Enquiries are still saved to MongoDB.
 
 | Variable | Default | Notes |
 |---|---|---|
-| `STORAGE_DRIVER` | `local` | `local` or `s3` |
-| `UPLOAD_DIR` | `backend/uploads` | |
+| `STORAGE_DRIVER` | `local` | **Use `php` in production.** `php`, `local` or `s3` |
+| `UPLOAD_PUBLIC_BASE_URL` | — | **Required when `STORAGE_DRIVER=php`.** Domain serving `public_html/uploads`, no trailing slash |
+| `UPLOAD_PHP_ENDPOINT_URL` | `UPLOAD_PUBLIC_BASE_URL` | Only if `upload.php` etc. live on a different host |
+| `UPLOAD_DIR` | `backend/uploads` | `local` driver only |
 | `MAX_UPLOAD_SIZE_MB` | `5` | |
 | `MAX_UPLOAD_FILES` | `10` | Per batch request |
-| `UPLOAD_CACHE_MAX_AGE` | `365d` | |
+| `UPLOAD_CACHE_MAX_AGE` | `365d` | `local` driver only |
+
+`STORAGE_DRIVER=php` means this API never receives a file. The admin panel posts
+straight to `upload.php` on Hostinger and sends back only the URL; this API
+stores it, and calls `delete.php` when an image is replaced or its record is
+deleted. Boot fails if `UPLOAD_PUBLIC_BASE_URL` is missing or malformed —
+otherwise the server would run normally while silently leaking every replaced
+image. Setup: `php-upload-api/README.md`.
+
+`UPLOAD_PUBLIC_BASE_URL` must match `VITE_UPLOAD_BASE_URL` in `Frontend/.env` and
+`UPLOAD_PUBLIC_BASE_URL` in `public_html/_upload_config.php`.
 
 Only when `STORAGE_DRIVER=s3` (also run `npm install @aws-sdk/client-s3`):
 `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`,

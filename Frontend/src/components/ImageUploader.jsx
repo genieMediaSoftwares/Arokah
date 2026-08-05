@@ -10,12 +10,14 @@ import {
 /**
  * Single-image upload field. Replaces the old "paste an image URL" input.
  *
- * The admin picks or drops a file, it uploads immediately, and `onChange`
- * receives the stored path (e.g. "/uploads/home/hero_123.webp") to save with
- * the rest of the form.
+ * The admin picks or drops a file, it goes straight to upload.php on Hostinger,
+ * and `onChange` receives the public URL it returns (e.g.
+ * "https://host/uploads/home/home_1723363782_a1b2c3.webp") to save with the rest
+ * of the form.
  *
  * Uploading on selection rather than on form submit is what makes the preview
- * instant and keeps the save step a plain JSON request.
+ * instant and keeps the save step a plain JSON request — by the time the admin
+ * hits Save, the image already exists at a permanent URL.
  */
 function ImageUploader({
   value,
@@ -68,11 +70,11 @@ function ImageUploader({
       abortRef.current = controller;
 
       try {
-        const path = await uploadImage(file, folder, {
+        const imageUrl = await uploadImage(file, folder, {
           signal: controller.signal,
           onProgress: setProgress,
         });
-        onChange(path);
+        onChange(imageUrl);
       } catch (err) {
         if (err?.name === "CanceledError" || err?.name === "AbortError") return;
         setError(err?.message || "Upload failed. Please try again.");

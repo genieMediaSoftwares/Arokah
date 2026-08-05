@@ -77,7 +77,14 @@ function notifySessionExpired() {
   });
 }
 
-async function refreshAccessToken() {
+/**
+ * Exported because the upload service talks to a different host (the PHP image
+ * API on Hostinger) and so cannot use the interceptor below, but still needs the
+ * same single-flight refresh — otherwise an upload starting at the moment a
+ * token expires would race the dashboard's own refresh and one of the two would
+ * be rotated out from under the other.
+ */
+export async function refreshAccessToken() {
   if (!refreshPromise) {
     refreshPromise = axios
       .post(`${BASE_URL}/auth/refresh`, {}, { withCredentials: true })

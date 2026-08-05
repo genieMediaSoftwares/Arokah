@@ -9,6 +9,11 @@
 **/*.env
 **/.env.*
 
+# The PHP upload API's config holds the JWT secret it shares with the Express
+# API. Only the template is tracked — see php-upload-api/_upload_config.example.php.
+_upload_config.php
+**/_upload_config.php
+
 # ─── Dependencies ─────────────────────────────────────────────────────────────
 node_modules/
 **/node_modules/

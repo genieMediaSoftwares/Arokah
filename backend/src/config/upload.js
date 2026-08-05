@@ -38,6 +38,18 @@ module.exports = {
   /** How long browsers may cache a served upload. Names are unique, so this is safe. */
   cacheMaxAge: env.UPLOAD_CACHE_MAX_AGE,
 
+  /**
+   * The PHP upload API in public_html. `publicBaseUrl` is the origin baked into
+   * every stored image URL; `endpointBaseUrl` is where upload.php / delete.php /
+   * list.php live. They are the same host in every normal deployment, and are
+   * separable only so the endpoints can be moved behind a different hostname
+   * without rewriting every URL already in the database.
+   */
+  php: {
+    publicBaseUrl: env.UPLOAD_PUBLIC_BASE_URL,
+    endpointBaseUrl: env.UPLOAD_PHP_ENDPOINT_URL || env.UPLOAD_PUBLIC_BASE_URL,
+  },
+
   s3: {
     endpoint: env.S3_ENDPOINT,
     region: env.S3_REGION,

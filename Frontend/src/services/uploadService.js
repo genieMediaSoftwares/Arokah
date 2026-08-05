@@ -1,11 +1,30 @@
-import api from "./api";
+import axios from "axios";
+import api, { tokenStore, refreshAccessToken, normalizeError } from "./api";
+import { UPLOAD_BASE_URL } from "../utils/imageUrl";
 
 /**
  * Image upload service.
  *
- * The admin never types a URL: a file goes to the backend, Multer stores it, and
- * the API returns the path to persist with the rest of the form.
+ * Files do NOT go through the Express API. They are posted straight to
+ * upload.php in Hostinger's public_html, which writes them into
+ * public_html/uploads/ and returns a permanent public URL. That URL is the only
+ * thing that ever reaches the database.
+ *
+ *   file ──▶ upload.php ──▶ "https://host/uploads/events/event_1_ab.webp"
+ *                                        │
+ *                                        ▼
+ *                            Express saves the string
+ *
+ * The point of the arrangement is durability: the Node API runs on Render, whose
+ * filesystem is wiped on every redeploy, so anything it stored locally vanished.
+ * Hostinger's disk is permanent, so an image stays until something deletes it on
+ * purpose.
+ *
+ * Deletion deliberately does NOT follow the same shortcut — see deleteImage().
  */
+
+export const UPLOAD_ENDPOINT = `${UPLOAD_BASE_URL}/upload.php`;
+export const LIST_ENDPOINT = `${UPLOAD_BASE_URL}/list.php`;
 
 export const MAX_IMAGE_SIZE_MB = 5;
 export const MAX_IMAGE_SIZE_BYTES = MAX_IMAGE_SIZE_MB * 1024 * 1024;
@@ -15,7 +34,7 @@ export const ACCEPTED_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp"];
 /** For the file picker's `accept` attribute. */
 export const ACCEPT_ATTRIBUTE = ACCEPTED_MIME_TYPES.join(",");
 
-/** Folders the API accepts — must match UPLOAD_FOLDERS in the backend. */
+/** Folders upload.php accepts — must match UPLOAD_FOLDERS in _upload_config.php. */
 export const UPLOAD_FOLDERS = {
   home: "home",
   events: "events",
@@ -26,10 +45,21 @@ export const UPLOAD_FOLDERS = {
   general: "general",
 };
 
+/** A plain client for the PHP host — no baseURL, no auth interceptor, no retries. */
+const uploadClient = axios.create({ timeout: 60000 });
+
+function assertConfigured() {
+  if (!UPLOAD_BASE_URL) {
+    throw new Error(
+      "Image uploads are not configured: set VITE_UPLOAD_BASE_URL in Frontend/.env and rebuild."
+    );
+  }
+}
+
 /**
  * Client-side pre-check. Catches mistakes instantly without a round trip, but
- * it is only a convenience — the backend re-validates every upload by reading
- * the file's actual bytes, because anything checked here can be bypassed.
+ * it is only a convenience — upload.php re-validates every upload by reading the
+ * file's actual bytes, because anything checked here can be bypassed.
  */
 export function validateImageFile(file) {
   if (!file) return "Choose an image first.";
@@ -59,23 +89,17 @@ export function formatBytes(bytes) {
 }
 
 /**
- * Uploads one image and resolves to its stored path, e.g.
- * "/uploads/home/hero_1723363782_a1b2c3.webp".
- *
- * `onProgress` receives 0-100.
+ * Posts the file once. Split out so the 401 path below can replay it with a
+ * fresh token without duplicating the request setup.
  */
-export async function uploadImage(file, folder = "general", { onProgress, signal } = {}) {
-  const clientError = validateImageFile(file);
-  if (clientError) throw new Error(clientError);
-
+function postFile(file, folder, token, { onProgress, signal }) {
   const formData = new FormData();
   formData.append("image", file);
+  formData.append("folder", folder);
 
-  const target = UPLOAD_FOLDERS[folder] ? folder : "general";
-
-  const response = await api.post(`/upload/${target}`, formData, {
+  return uploadClient.post(UPLOAD_ENDPOINT, formData, {
     // Let the browser set Content-Type so it can add the multipart boundary.
-    headers: { "Content-Type": undefined },
+    headers: { Authorization: `Bearer ${token}` },
     signal,
     onUploadProgress: (event) => {
       if (!onProgress) return;
@@ -83,10 +107,47 @@ export async function uploadImage(file, folder = "general", { onProgress, signal
       onProgress(total ? Math.min(100, Math.round((event.loaded * 100) / total)) : 0);
     },
   });
+}
 
-  const image = response?.data?.image ?? response?.data?.data?.image;
-  if (!image) throw new Error("Upload succeeded but no image path was returned.");
-  return image;
+/**
+ * Uploads one image and resolves to its absolute public URL, e.g.
+ * "https://example.com/uploads/home/home_1723363782_a1b2c3.webp".
+ *
+ * `onProgress` receives 0-100.
+ */
+export async function uploadImage(file, folder = "general", { onProgress, signal } = {}) {
+  assertConfigured();
+
+  const clientError = validateImageFile(file);
+  if (clientError) throw new Error(clientError);
+
+  const target = UPLOAD_FOLDERS[folder] ? folder : "general";
+
+  let token = tokenStore.get();
+  if (!token) throw new Error("Sign in again to upload images.");
+
+  let response;
+  try {
+    response = await postFile(file, target, token, { onProgress, signal });
+  } catch (error) {
+    // Access tokens live about fifteen minutes, and an admin editing a long page
+    // will cross that boundary mid-session. One silent refresh and one replay
+    // turns what would be a baffling "sign in again" into nothing at all.
+    if (error?.response?.status !== 401) throw normalizeError(error);
+
+    try {
+      token = await refreshAccessToken();
+    } catch {
+      throw new Error("Your session expired. Sign in again to upload images.");
+    }
+    response = await postFile(file, target, token, { onProgress, signal }).catch((retryError) => {
+      throw normalizeError(retryError);
+    });
+  }
+
+  const imageUrl = response?.data?.imageUrl;
+  if (!imageUrl) throw new Error("Upload succeeded but no image URL was returned.");
+  return imageUrl;
 }
 
 /** Uploads several images, reporting overall progress across the batch. */
@@ -94,10 +155,10 @@ export async function uploadImages(files, folder = "general", { onProgress, sign
   const list = Array.from(files || []);
   if (list.length === 0) return [];
 
-  const paths = [];
+  const urls = [];
   for (let index = 0; index < list.length; index += 1) {
     // Sequential so progress is meaningful and the server isn't hit all at once.
-    const path = await uploadImage(list[index], folder, {
+    const url = await uploadImage(list[index], folder, {
       signal,
       onProgress: (percent) => {
         if (!onProgress) return;
@@ -105,18 +166,52 @@ export async function uploadImages(files, folder = "general", { onProgress, sign
         onProgress(Math.round(completed), index + 1, list.length);
       },
     });
-    paths.push(path);
+    urls.push(url);
   }
-  return paths;
+  return urls;
 }
 
 /**
- * Deletes an uploaded image from the server.
+ * Deletes an uploaded image.
  *
- * The backend refuses if the image is still referenced by an event or the
- * homepage, so this is only for images already detached from their content.
+ * This one call still goes through the Express API rather than straight to
+ * delete.php, and the asymmetry is deliberate. PHP has no database access, so it
+ * cannot tell whether the file is still on a live event or the homepage; Express
+ * can, refuses when it is, and only then forwards the request to delete.php.
+ * Calling delete.php from here would skip that check and break a published page.
+ *
+ * Most deletions never come through here at all. Replacing an image during an
+ * edit, or deleting a record outright, leaves the old file orphaned — and the
+ * Express save path already detects that and cleans it up server-side, so it
+ * happens even if the admin closes the tab mid-save.
  */
-export async function deleteImage(imagePath) {
-  const response = await api.delete("/upload", { data: { image: imagePath } });
+export async function deleteImage(imageUrl) {
+  const response = await api.delete("/upload", { data: { image: imageUrl } });
   return response?.data?.data ?? null;
+}
+
+/**
+ * Lists what is physically stored on Hostinger, straight from list.php.
+ *
+ * The database says what the site displays; this says what actually exists.
+ * The difference between the two is the orphan set.
+ */
+export async function listStoredImages({ folder, page = 1, limit = 100 } = {}) {
+  assertConfigured();
+
+  const token = tokenStore.get();
+  if (!token) throw new Error("Sign in again to browse stored images.");
+
+  try {
+    const response = await uploadClient.get(LIST_ENDPOINT, {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { ...(folder ? { folder } : {}), page, limit },
+    });
+    return {
+      files: response?.data?.files ?? [],
+      meta: response?.data?.meta ?? null,
+    };
+  } catch (error) {
+    throw normalizeError(error);
+  }
 }

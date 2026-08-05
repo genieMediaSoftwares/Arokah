@@ -10,9 +10,10 @@ import {
 /**
  * Multi-image upload grid — used for the hero carousel, gallery and portfolio.
  *
- * `value` is an array of stored paths; `onChange` receives the updated array.
- * Files upload one at a time so a single rejected image doesn't discard the
- * whole batch, and each tile can be replaced or removed individually.
+ * `value` is an array of public image URLs returned by upload.php; `onChange`
+ * receives the updated array. Files upload one at a time so a single rejected
+ * image doesn't discard the whole batch, and each tile can be replaced or
+ * removed individually.
  */
 function MultipleImageUploader({
   value = [],
@@ -100,8 +101,8 @@ function MultipleImageUploader({
         for (let i = 0; i < toUpload.length; i += 1) {
           setBatch({ current: i + 1, total: toUpload.length });
           setProgress(0);
-          const path = await uploadImage(toUpload[i], folder, { onProgress: setProgress });
-          uploaded.push(path);
+          const imageUrl = await uploadImage(toUpload[i], folder, { onProgress: setProgress });
+          uploaded.push(imageUrl);
         }
       } catch (err) {
         setError(err?.message || "Upload failed. Please try again.");

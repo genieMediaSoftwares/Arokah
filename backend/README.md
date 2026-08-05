@@ -183,41 +183,39 @@ Secret: must match RAZORPAY_WEBHOOK_SECRET
 
 ## Image uploads
 
-Admins upload files; they never paste URLs. Multer receives the file, the bytes
-are verified, and the API returns the path to store.
+**This API does not accept uploads.** There is no `POST /api/upload`.
+
+Admins pick a file in the panel and it goes straight to `upload.php` in
+Hostinger's `public_html`, which stores it and returns a permanent URL. That URL
+string is the only thing that reaches this API and the only thing in the
+database. See `php-upload-api/README.md`.
 
 ```
-POST /api/upload/home        multipart/form-data, field name "image"
- -> { "success": true, "image": "/uploads/home/home_1723363782_a1b2c3.webp" }
+browser ──file──▶ upload.php ──URL──▶ browser ──JSON──▶ this API ──▶ MySQL
 ```
 
-Folders (`:folder`) are allowlisted — `home`, `events`, `gallery`, `categories`,
-`users`, `documents`, `general` — each with its own filename prefix. Anything
-else is a 422.
+The reason is durability: this API runs on Render, whose filesystem is wiped on
+every redeploy, so every image the old Multer route stored eventually vanished
+and left rows pointing at files that no longer existed. Hostinger's disk is
+permanent.
 
-**Paths are stored root-relative**, not as absolute URLs. Moving the API to a new
-domain therefore costs nothing, because no row in MongoDB has a hostname baked
-into it. The frontend prepends the API origin at render time
-(`Frontend/src/utils/imageUrl.js`).
+Both sides validate independently — `upload.php` reads the file's leading bytes
+and refuses anything that is not a real JPG, PNG or WEBP, and every image field
+here is still checked by `isImageReference()` in
+`src/validators/common.validator.js`, which accepts only `http(s)` URLs and
+legacy `/uploads/...` paths. A `javascript:` or `data:` payload never reaches an
+`<img src>`.
 
-External `https://` URLs are still accepted by every image field. Content
-migrated from Firebase points at Google Drive and similar hosts, and rejecting
-those would blank the live site the moment an admin re-saved a page.
+External `https://` URLs remain valid in every image field. Content migrated from
+Firebase points at Google Drive and similar hosts, and rejecting those would
+blank the live site the moment an admin re-saved a page.
 
-### Validation
+### What this API still owns: deletion
 
-| Rule | Enforcement |
-|---|---|
-| jpg, jpeg, png, webp only | extension + MIME, then **file signature** |
-| gif, svg, bmp, tiff rejected | detected by signature and named in the error |
-| Max 5 MB (`MAX_UPLOAD_SIZE_MB`) | multer limit |
-| Filenames sanitised | server generates the name; the client's is only kept as metadata |
-| Never overwrites | `<prefix>_<timestamp>_<random><ext>`, written with the `wx` flag |
-
-The signature check is the one that matters. A filename and a `Content-Type` are
-both attacker-controlled, so a webshell renamed `photo.png` and sent as
-`image/png` passes every naming check — `src/utils/imageSignature.js` reads the
-leading bytes and rejects it. A content/label mismatch is refused too.
+`DELETE /api/upload` stayed, because PHP has no database access and so cannot
+answer the one question that matters before removing a file — is anything still
+pointing at it? This API can, and forwards to `delete.php` only once the answer
+is no.
 
 ### Automatic cleanup
 
@@ -230,23 +228,30 @@ write path that can orphan a file routes through
 - saving the homepage reclaims whatever it no longer references
 - `DELETE /api/upload` refuses (409) while an image is still in use
 
-Two rules keep this safe to run automatically: only paths under `/uploads` are
-ever touched, and a file is deleted only after confirming no other document
+Two rules keep this safe to run automatically: only URLs on your own upload
+domain are ever touched — a Google Drive link inherited from Firebase is not
+yours to delete — and a file is deleted only after confirming no other document
 still references it.
 
-### Swapping in cloud storage
+A delete that fails is logged and swallowed rather than thrown. This runs as a
+side effect of saving content, and a leaked orphan file is a far better outcome
+than an admin's save appearing to fail because the image host blipped. `list.php`
+is how you find anything that leaks.
 
-- `STORAGE_DRIVER=local` (default) — files go to `backend/uploads/`, served from
-  `/uploads`. Fine for a single server.
-- `STORAGE_DRIVER=s3` — any S3-compatible bucket (AWS S3, Cloudflare R2,
-  DigitalOcean Spaces, Hostinger Object Storage). Requires
+### Storage drivers
+
+- `STORAGE_DRIVER=php` (**production**) — images live in Hostinger's
+  `public_html/uploads`, written by `upload.php`. This API stores URLs and calls
+  `delete.php` for cleanup. Requires `UPLOAD_PUBLIC_BASE_URL`; the server refuses
+  to boot without it, because the alternative is a server that runs fine and
+  silently leaks every replaced image.
+- `STORAGE_DRIVER=local` (retired) — files go to `backend/uploads/`. Unusable on
+  Render: not shared between instances, and wiped on redeploy.
+- `STORAGE_DRIVER=s3` — any S3-compatible bucket. Requires
   `npm install @aws-sdk/client-s3` and the `S3_*` variables.
 
-Nothing above the driver changes, and the frontend needs no edit at all: it
-already renders whatever the API returns, absolute or relative.
-
-If you run more than one instance, you **must** switch to `s3` — local disk is
-not shared between instances and is wiped on redeploy.
+Nothing above the driver changes. `src/services/storage/` is the only place that
+knows where bytes live.
 
 ## Security
 

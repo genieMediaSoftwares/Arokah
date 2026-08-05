@@ -1,0 +1,55 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Sample public_html/.htaccess
+#
+# Rename to ".htaccess" in public_html. If you already have one for the React
+# build, do not replace it — just make sure it contains the two RewriteCond
+# lines marked below.
+#
+# THE IMPORTANT PART: a single-page app needs "send every URL to index.html so
+# React Router can handle it". Written naively, that rule swallows upload.php
+# too, and every upload comes back as your homepage's HTML instead of JSON.
+# The `!-f` and `!-d` conditions are what stop that: a request is only rewritten
+# when no real file or directory matches it.
+# ─────────────────────────────────────────────────────────────────────────────
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
+
+    # Never rewrite a request that maps to something real — this is what keeps
+    # upload.php, delete.php, list.php and /uploads/* reachable.
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+
+    RewriteRule ^ index.html [L]
+</IfModule>
+
+# The config file holds the shared JWT secret. PHP is executed rather than
+# served, so its contents are never exposed — but if PHP is ever disabled or
+# misconfigured, this makes the difference between a broken page and a leaked
+# secret.
+<FilesMatch "^_upload_(config|lib)\.php$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# Do not compress images; they are already compressed and gzip only adds CPU.
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/css application/javascript application/json
+</IfModule>
+
+<IfModule mod_headers.c>
+    # The hashed asset filenames Vite emits are safe to cache forever.
+    <FilesMatch "\.(?i:js|css|woff2)$">
+        Header set Cache-Control "public, max-age=31536000, immutable"
+    </FilesMatch>
+    # index.html must NOT be cached, or a deploy leaves visitors on the old build.
+    <FilesMatch "^index\.html$">
+        Header set Cache-Control "no-cache, must-revalidate"
+    </FilesMatch>
+</IfModule>

@@ -8,8 +8,9 @@ const ApiError = require('../../utils/ApiError');
 const { verifyImage } = require('../../utils/imageSignature');
 const LocalStorageDriver = require('./localStorage.driver');
 const S3StorageDriver = require('./s3Storage.driver');
+const RemotePhpDriver = require('./remotePhp.driver');
 
-const DRIVERS = { local: LocalStorageDriver, s3: S3StorageDriver };
+const DRIVERS = { local: LocalStorageDriver, s3: S3StorageDriver, php: RemotePhpDriver };
 
 // Folder allowlist and filename prefixes live in config/upload.js.
 const UPLOAD_FOLDERS = uploadConfig.folders;
