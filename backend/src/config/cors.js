@@ -14,7 +14,7 @@ const logger = require('./logger');
  * and is merged in on top, so extra hosts stay configurable without a deploy.
  */
 const BASE_ORIGINS = [
-  'https://arokah.kkdigitalgrowth.com',
+  'https://maroon-pig-939052.hostingersite.com',
   'https://www.arokah.kkdigitalgrowth.com',
   'http://localhost:3000',
   'http://localhost:5173',
