@@ -5,10 +5,10 @@ import { useNavigate } from "react-router-dom";
 import logger from "../utils/logger";
 
 function AdminDashboard() {
-  const [events, setEvents]   = useState([]);
+  const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch]   = useState("");
-  const [filter, setFilter]   = useState("all");
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("all");
   const navigate = useNavigate();
 
   // Admins see every status, including completed and cancelled events.
@@ -40,8 +40,8 @@ function AdminDashboard() {
     }
   };
 
-  const totalEvents   = events.length;
-  const liveCount     = events.filter((e) => e.status === "live").length;
+  const totalEvents = events.length;
+  const liveCount = events.filter((e) => e.status === "live").length;
   const upcomingCount = events.filter((e) => e.status === "upcoming").length;
 
   const filtered = events.filter((e) => {
@@ -70,9 +70,7 @@ function AdminDashboard() {
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
             </span>
-            <span className="text-[10px] font-bold tracking-widest uppercase text-emerald-600">
-              Live · MongoDB Connected
-            </span>
+
           </div>
 
           {/* Title + action buttons */}
@@ -204,23 +202,21 @@ function AdminDashboard() {
             {/* Filter pills */}
             <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
               {[
-                { key: "all",      label: "All",          count: totalEvents   },
-                { key: "live",     label: "🟢 Live",       count: liveCount     },
-                { key: "upcoming", label: "📅 Upcoming",   count: upcomingCount },
+                { key: "all", label: "All", count: totalEvents },
+                { key: "live", label: "🟢 Live", count: liveCount },
+                { key: "upcoming", label: "📅 Upcoming", count: upcomingCount },
               ].map((f) => (
                 <button
                   key={f.key}
                   onClick={() => setFilter(f.key)}
-                  className={`flex items-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-xl transition-all active:scale-95 whitespace-nowrap ${
-                    filter === f.key
+                  className={`flex items-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-xl transition-all active:scale-95 whitespace-nowrap ${filter === f.key
                       ? "bg-purple-600 text-white shadow-md shadow-purple-200"
                       : "bg-white border border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-700"
-                  }`}
+                    }`}
                 >
                   {f.label}
-                  <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded-full ${
-                    filter === f.key ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"
-                  }`}>
+                  <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded-full ${filter === f.key ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"
+                    }`}>
                     {f.count}
                   </span>
                 </button>
@@ -445,13 +441,13 @@ const StatStrip = ({ label, value, sub, accent, pulse }) => (
 const QuickLink = ({ icon, title, desc, onClick, accent }) => {
   const borders = {
     purple: "border-l-purple-500 hover:bg-purple-50/50",
-    green:  "border-l-emerald-500 hover:bg-emerald-50/50",
-    blue:   "border-l-sky-500 hover:bg-sky-50/50",
+    green: "border-l-emerald-500 hover:bg-emerald-50/50",
+    blue: "border-l-sky-500 hover:bg-sky-50/50",
   };
   const btnColors = {
     purple: "bg-purple-600 hover:bg-purple-700 shadow-purple-200",
-    green:  "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200",
-    blue:   "bg-sky-600 hover:bg-sky-700 shadow-sky-200",
+    green: "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200",
+    blue: "bg-sky-600 hover:bg-sky-700 shadow-sky-200",
   };
   return (
     <div
